@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { COL_COUNT, ROW_COUNT } from "@/components/grid/constants";
+import { OPEN_FILE_ACCEPT, openFileAsSpreadsheet } from "@/lib/open-file";
 import { deleteSheet, listSheets, newSheetId } from "@/lib/storage";
 
 const formatWhen = (ms: number) =>
@@ -12,15 +14,54 @@ export default function SheetList() {
   const router = useRouter();
   // Rendered client-only, so localStorage can be read during initialisation.
   const [sheets, setSheets] = useState(listSheets);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const open = async (file: File) => {
+    setOpening(true);
+    setError(null);
+    try {
+      router.push(`/sheet/${await openFileAsSpreadsheet(file, { maxRows: ROW_COUNT, maxCols: COL_COUNT })}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't open that file.");
+      setOpening(false);
+    }
+  };
 
   return (
     <div className="w-full">
-      <button
-        onClick={() => router.push(`/sheet/${newSheetId()}`)}
-        className="w-full rounded-lg bg-[var(--accent)] px-5 py-3 font-medium text-white shadow-sm transition hover:opacity-90 sm:w-auto"
-      >
-        + New sheet
-      </button>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <button
+          onClick={() => router.push(`/sheet/${newSheetId()}`)}
+          className="rounded-lg bg-[var(--accent)] px-5 py-3 font-medium text-white shadow-sm transition hover:opacity-90"
+        >
+          New spreadsheet
+        </button>
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={opening}
+          className="rounded-lg border border-[var(--border)] px-5 py-3 font-medium transition hover:bg-[var(--hover)] disabled:opacity-50"
+        >
+          {opening ? "Opening…" : "Open Excel or CSV file"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept={OPEN_FILE_ACCEPT}
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void open(file);
+          }}
+        />
+      </div>
+      {error && (
+        <p role="alert" className="mt-3 text-sm text-[var(--error)]">
+          {error}
+        </p>
+      )}
 
       {sheets.length > 0 && (
         <div className="mt-10">

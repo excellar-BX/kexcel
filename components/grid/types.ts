@@ -75,6 +75,9 @@ export interface Commands {
   makeCopy(): void;
   importCSV(): void;
   exportCSV(): void;
+  /** Opens an .xlsx or .csv file as a new spreadsheet. */
+  openFile(): void;
+  exportXlsx(): void;
   print(): void;
   renameWorkbook(): void;
 

@@ -37,6 +37,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       [`${mod} + D / ${mod} + R`, "Fill down / right"],
       [`${mod} + F`, "Find"],
       [`${mod} + P`, "Print"],
+      [`${mod} + O`, "Open a file"],
     ],
   },
   {

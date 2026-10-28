@@ -27,7 +27,9 @@ To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tie
 - Find (Ctrl+F), name box to jump to a cell, zoom, gridlines toggle, right-click menus
 - Copy, cut and paste with formulas and formats, also to and from Excel and Google Sheets
 - Undo and redo for edits, formatting, structure and tab changes
-- CSV import (into a new tab) and export
+- Open and download Excel files (.xlsx) with values, formulas, formatting, column widths, row heights and frozen panes; CSV import and export
+- Freeze rows and columns (View > Freeze)
+- Print with page, scale, gridline and header options
 - Grid of 10,000 rows × 52 columns that renders only the visible cells; resizable rows and columns, double-click to fit
 - About 40 functions with recalculation of only the affected cells and circular reference detection
 - Spreadsheets saved automatically in the browser
@@ -50,11 +52,13 @@ lib/engine/             Formula engine in plain TypeScript, no React
 lib/sheet-ops.ts        Fill and sort
 lib/storage.ts          localStorage persistence
 lib/tsv.ts              Clipboard (TSV) and CSV
+lib/xlsx/               Excel .xlsx reader and writer (no network, runs in the browser)
+lib/ai/                 AI assistant prompts and provider adapters (server only)
 ```
 
 ## Roadmap
 
-1. `.xlsx` import and export, freeze rows and columns, merge cells, wrap text, dates
+1. Merge cells, wrap text, real date values and date functions
 2. AI: write formulas from plain English, explain formulas, find errors, ask questions of a sheet
 3. Accounts, cloud save, sharing, charts, mobile polish
 4. Templates for small businesses

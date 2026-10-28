@@ -54,10 +54,12 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
       label: "File",
       items: [
         { label: "New spreadsheet", onSelect: c.newWorkbook },
+        { label: "Open file (.xlsx, .csv)…", shortcut: `${mod}O`, onSelect: c.openFile },
         { label: "Make a copy", onSelect: c.makeCopy },
         { label: "Rename", onSelect: c.renameWorkbook },
         { type: "separator" },
-        { label: "Import CSV…", onSelect: c.importCSV },
+        { label: "Import CSV into a new tab…", onSelect: c.importCSV },
+        { label: "Download as Excel (.xlsx)", onSelect: c.exportXlsx },
         { label: "Download as CSV (current tab)", onSelect: c.exportCSV },
         { type: "separator" },
         { label: "Print", shortcut: `${mod}P`, onSelect: c.print },

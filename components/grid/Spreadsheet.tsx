@@ -29,7 +29,9 @@ import {
   type WorkbookJSON,
 } from "@/lib/engine";
 import { fillPatches, sortPatches, type Range } from "@/lib/sheet-ops";
+import { OPEN_FILE_ACCEPT, openFileAsSpreadsheet, takeOpenNotes } from "@/lib/open-file";
 import { loadSheet, newSheetId, saveSheet } from "@/lib/storage";
+import { writeXlsx, XLSX_MIME } from "@/lib/xlsx/write";
 import { parseCSV, parseTSV, toCSV, toTSV } from "@/lib/tsv";
 import { COL_COUNT, DEFAULT_COL_WIDTH, MIN_COL_WIDTH, ROW_COUNT } from "./constants";
 import CellContextMenu from "./CellContextMenu";
@@ -95,7 +97,8 @@ function Spreadsheet({ docId }: { docId: string }) {
   const [menu, setMenu] = useState<{ x: number; y: number; target: "cell" | "row" | "col" } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  // Notes from opening a file (things that didn't carry over) show once on arrival.
+  const [toast, setToast] = useState<string | null>(() => takeOpenNotes(docId).join(" ") || null);
   const [nameBox, setNameBox] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [printJob, setPrintJob] = useState<PrintJob | null>(null);
@@ -107,6 +110,7 @@ function Spreadsheet({ docId }: { docId: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const openRef = useRef<HTMLInputElement>(null);
 
   const layout = useMemo(() => {
     void version; // sizes and fonts change with edits
@@ -130,7 +134,7 @@ function Spreadsheet({ docId }: { docId: string }) {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 4000);
+    const timer = setTimeout(() => setToast(null), Math.max(4000, toast.length * 60));
     return () => clearTimeout(timer);
   }, [toast]);
 
@@ -514,6 +518,25 @@ function Spreadsheet({ docId }: { docId: string }) {
     );
   };
 
+  /** Saves data as a file, replacing characters Windows doesn't allow in file names. */
+  const download = (data: BlobPart, type: string, name: string) => {
+    const url = URL.createObjectURL(new Blob([data], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name.replace(/[\\/:*?"<>|]/g, "_");
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openFile = async (file: File) => {
+    try {
+      const id = await openFileAsSpreadsheet(file, { maxRows: ROW_COUNT, maxCols: COL_COUNT });
+      router.push(`/sheet/${id}`);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Couldn't open that file.");
+    }
+  };
+
   const exportCSV = () => {
     const used = wb.usedBounds(activeSheet);
     const rows: string[][] = [];
@@ -524,13 +547,7 @@ function Spreadsheet({ docId }: { docId: string }) {
       }
       rows.push(line);
     }
-    const blob = new Blob([toCSV(rows)], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${title || "Spreadsheet"} - ${wb.sheetName(activeSheet)}.csv`.replace(/[\\/:*?"<>|]/g, "_");
-    a.click();
-    URL.revokeObjectURL(url);
+    download(toCSV(rows), "text/csv;charset=utf-8", `${title || "Spreadsheet"} - ${wb.sheetName(activeSheet)}.csv`);
   };
 
   /** Widest text in a column, measured with the cell fonts, in unscaled pixels. */
@@ -774,6 +791,15 @@ function Spreadsheet({ docId }: { docId: string }) {
     },
     importCSV: () => fileRef.current?.click(),
     exportCSV,
+    openFile: () => openRef.current?.click(),
+    exportXlsx: () => {
+      try {
+        download(writeXlsx(wb) as BlobPart, XLSX_MIME, `${title || "Spreadsheet"}.xlsx`);
+      } catch (e) {
+        console.error(e);
+        setToast("Couldn't create the Excel file.");
+      }
+    },
     print: () => {
       if (editing) commitEdit();
       setPrintOpen(true);
@@ -865,6 +891,7 @@ function Spreadsheet({ docId }: { docId: string }) {
       if (key === "f") return shortcut(commands.find);
       if (key === "\\") return shortcut(commands.clearFormatting);
       if (key === "/") return shortcut(commands.showShortcuts);
+      if (key === "o") return shortcut(commands.openFile);
       if (key === " ") {
         return shortcut(() =>
           select({ anchor: { row: 0, col: range.c0 }, focus: { row: ROW_COUNT - 1, col: range.c1 } }, false),
@@ -1174,6 +1201,17 @@ function Spreadsheet({ docId }: { docId: string }) {
           {toast}
         </div>
       )}
+      <input
+        ref={openRef}
+        type="file"
+        accept={OPEN_FILE_ACCEPT}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void openFile(file);
+        }}
+      />
       <input
         ref={fileRef}
         type="file"
