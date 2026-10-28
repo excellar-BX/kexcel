@@ -40,29 +40,43 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, onClose: () => vo
 }
 
 /** Keeps a floating element inside the window by nudging it left or up. */
-function useKeepInView(ref: RefObject<HTMLElement | null>) {
+function useKeepInView(ref: RefObject<HTMLElement | null>, enabled = true) {
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || !enabled) return;
     const rect = el.getBoundingClientRect();
     const margin = 8;
     const dx = Math.min(0, window.innerWidth - margin - rect.right);
     let dy = Math.min(0, window.innerHeight - margin - rect.bottom);
     if (rect.top + dy < margin) {
       dy = margin - rect.top;
+      // Only a menu taller than the window scrolls; scrolling would otherwise clip submenus.
       el.style.maxHeight = `${window.innerHeight - 2 * margin}px`;
+      el.style.overflowY = "auto";
     }
     if (dx || dy) el.style.transform = `translate(${dx}px, ${dy}px)`;
-  }, [ref]);
+  }, [ref, enabled]);
 }
 
 export const menuPanelClass =
-  "min-w-[220px] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] py-1 text-sm shadow-xl";
+  "min-w-[220px] rounded-lg border border-[var(--border)] bg-[var(--panel)] py-1 text-sm shadow-xl";
 
-export function MenuList({ items, onClose }: { items: MenuEntry[]; onClose: () => void }) {
+/**
+ * A list of menu items with submenus. `keepInView` lets the list nudge itself
+ * inside the window; leave it off when a parent panel already does that.
+ */
+export function MenuList({
+  items,
+  onClose,
+  keepInView = false,
+}: {
+  items: MenuEntry[];
+  onClose: () => void;
+  keepInView?: boolean;
+}) {
   const [openSub, setOpenSub] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  useKeepInView(listRef);
+  useKeepInView(listRef, keepInView);
 
   const focusItem = (dir: 1 | -1) => {
     const buttons = [...(listRef.current?.querySelectorAll<HTMLButtonElement>(":scope > div > button:not(:disabled)") ?? [])];
@@ -137,7 +151,7 @@ export function MenuList({ items, onClose }: { items: MenuEntry[]; onClose: () =
                   }
                 }}
               >
-                <MenuList items={item.items!} onClose={onClose} />
+                <MenuList items={item.items!} onClose={onClose} keepInView />
               </div>
             )}
           </div>
@@ -187,13 +201,29 @@ function FloatingPanel({ children }: { children: ReactNode }) {
   return <div ref={ref}>{children}</div>;
 }
 
-/** A menu that opens at a point, such as a right-click menu. */
-export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuEntry[]; onClose: () => void }) {
+/**
+ * A menu that opens at a point, such as a right-click menu. "above" grows
+ * upward from the point, for menus opened near the bottom of the window.
+ */
+export function ContextMenu({
+  x,
+  y,
+  items,
+  onClose,
+  placement = "below",
+}: {
+  x: number;
+  y: number;
+  items: MenuEntry[];
+  onClose: () => void;
+  placement?: "below" | "above";
+}) {
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, onClose);
+  const position = placement === "above" ? { left: x, bottom: window.innerHeight - y } : { left: x, top: y };
   return (
-    <div ref={ref} className="fixed z-50" style={{ left: x, top: y }} onContextMenu={(e) => e.preventDefault()}>
-      <MenuList items={items} onClose={onClose} />
+    <div ref={ref} className="fixed z-50" style={position} onContextMenu={(e) => e.preventDefault()}>
+      <MenuList items={items} onClose={onClose} keepInView />
     </div>
   );
 }

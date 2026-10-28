@@ -148,29 +148,35 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
 }
 
 export default function MenuBar({ commands, state }: { commands: Commands; state: EditorState }) {
-  const [open, setOpen] = useState<number | null>(null);
+  // Dropdowns are positioned against the window so a scrolling parent can't clip them.
+  const [open, setOpen] = useState<{ index: number; left: number; top: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(null), []);
   useDismiss(ref, close, open !== null);
   const menus = buildMenus(commands, state);
 
+  const openAt = (index: number, button: HTMLElement) => {
+    const rect = button.getBoundingClientRect();
+    setOpen({ index, left: rect.left, top: rect.bottom + 2 });
+  };
+
   return (
     <nav ref={ref} className="flex items-center text-sm" aria-label="Menu">
       {menus.map((m, i) => (
-        <div key={m.label} className="relative">
+        <div key={m.label}>
           <button
             type="button"
             aria-haspopup="menu"
-            aria-expanded={open === i}
-            onClick={() => setOpen(open === i ? null : i)}
-            onMouseEnter={() => open !== null && setOpen(i)}
-            className={`rounded px-2 py-0.5 hover:bg-[var(--hover)] ${open === i ? "bg-[var(--hover)]" : ""}`}
+            aria-expanded={open?.index === i}
+            onClick={(e) => (open?.index === i ? close() : openAt(i, e.currentTarget))}
+            onMouseEnter={(e) => open && open.index !== i && openAt(i, e.currentTarget)}
+            className={`rounded px-2 py-0.5 hover:bg-[var(--hover)] ${open?.index === i ? "bg-[var(--hover)]" : ""}`}
           >
             {m.label}
           </button>
-          {open === i && (
-            <div className="absolute left-0 top-full z-50 mt-0.5">
-              <MenuList items={m.items} onClose={close} />
+          {open?.index === i && (
+            <div className="fixed z-50" style={{ left: open.left, top: open.top }}>
+              <MenuList items={m.items} onClose={close} keepInView />
             </div>
           )}
         </div>

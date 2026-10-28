@@ -87,7 +87,7 @@ export default function SheetTabs({ commands: c, state: s }: { commands: Command
                 onClick={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
                   c.switchSheet(sheet.id);
-                  setMenu({ id: sheet.id, x: r.left, y: r.top - 8 });
+                  setMenu({ id: sheet.id, x: r.left, y: r.top - 4 });
                 }}
                 className="mr-1 grid h-5 w-5 place-items-center rounded opacity-60 hover:bg-[var(--hover)] hover:opacity-100"
               >
@@ -102,6 +102,7 @@ export default function SheetTabs({ commands: c, state: s }: { commands: Command
         <ContextMenu
           x={menu.x}
           y={menu.y}
+          placement="above"
           onClose={() => setMenu(null)}
           items={[
             {
