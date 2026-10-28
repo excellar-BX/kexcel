@@ -51,7 +51,7 @@ async function run<S extends z.ZodType>(schema: S, effort: Effort, context: stri
   }
   if (context.length > MAX_CONTEXT_LENGTH) throw new AIError("This sheet is too large to send to the AI.", 413);
   const user = `<sheet>\n${context}\n</sheet>\n\n${task}`;
-  return provider === "groq" ? callGroq(schema, SYSTEM, user) : callAnthropic(schema, effort, SYSTEM, user);
+  return provider === "groq" ? callGroq(schema, effort, SYSTEM, user) : callAnthropic(schema, effort, SYSTEM, user);
 }
 
 export const writeFormula = (context: string, prompt: string) =>

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { AIError } from "../errors";
 
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const TIMEOUT_MS = 60_000;
 
 export const groqConfigured = () => Boolean(process.env.GROQ_API_KEY);
@@ -20,7 +20,14 @@ function extractJSON(text: string): unknown {
   return JSON.parse(trimmed);
 }
 
-async function complete(model: string, messages: { role: string; content: string }[]): Promise<ChatCompletion> {
+/** Reasoning models (gpt-oss, qwen3) take an effort setting; others ignore it. */
+const isReasoningModel = (model: string) => /gpt-oss|qwen3/i.test(model);
+
+async function complete(
+  model: string,
+  effort: "low" | "medium",
+  messages: { role: string; content: string }[],
+): Promise<ChatCompletion> {
   let res: Response;
   try {
     res = await fetch(ENDPOINT, {
@@ -30,7 +37,9 @@ async function complete(model: string, messages: { role: string; content: string
         model,
         messages,
         temperature: 0.2,
-        max_completion_tokens: 4096,
+        // Reasoning models spend part of this on thinking before the answer.
+        max_completion_tokens: 8192,
+        ...(isReasoningModel(model) ? { reasoning_effort: effort } : {}),
         // JSON mode: the reply is a single JSON object. The schema itself goes in the prompt.
         response_format: { type: "json_object" },
       }),
@@ -57,7 +66,12 @@ async function complete(model: string, messages: { role: string; content: string
   throw new AIError(`Groq returned an error (${res.status}). Please try again.`, 502);
 }
 
-export async function callGroq<S extends z.ZodType>(schema: S, system: string, user: string): Promise<z.infer<S>> {
+export async function callGroq<S extends z.ZodType>(
+  schema: S,
+  effort: "low" | "medium",
+  system: string,
+  user: string,
+): Promise<z.infer<S>> {
   const model = groqModel();
   const shape = JSON.stringify(z.toJSONSchema(schema));
   const messages = [
@@ -70,7 +84,7 @@ export async function callGroq<S extends z.ZodType>(schema: S, system: string, u
 
   // One retry if the model's JSON doesn't fit the schema, telling it what was wrong.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const data = await complete(model, messages);
+    const data = await complete(model, effort, messages);
     const choice = data.choices?.[0];
     if (choice?.finish_reason === "length") throw new AIError("The AI's answer was too long. Please try again.", 502);
     const content = choice?.message?.content ?? "";
