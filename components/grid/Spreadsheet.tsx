@@ -157,10 +157,18 @@ function Spreadsheet({ docId }: { docId: string }) {
     const bottom = layout.rowTop(row + 1);
     const left = layout.colLeft(col);
     const right = layout.colLeft(col + 1);
-    if (top < el.scrollTop) el.scrollTop = top;
-    else if (bottom > el.scrollTop + viewH) el.scrollTop = bottom - viewH;
-    if (left < el.scrollLeft) el.scrollLeft = left;
-    else if (right > el.scrollLeft + viewW) el.scrollLeft = Math.min(left, right - viewW);
+    // Frozen rows and columns are always visible and cover the top and left of the view.
+    const freeze = wb.getFreeze(activeSheet);
+    const frozenH = layout.rowTop(Math.min(freeze.rows, ROW_COUNT - 1));
+    const frozenW = layout.colLeft(Math.min(freeze.cols, COL_COUNT - 1));
+    if (row >= freeze.rows) {
+      if (top < el.scrollTop + frozenH) el.scrollTop = top - frozenH;
+      else if (bottom > el.scrollTop + viewH) el.scrollTop = bottom - viewH;
+    }
+    if (col >= freeze.cols) {
+      if (left < el.scrollLeft + frozenW) el.scrollLeft = left - frozenW;
+      else if (right > el.scrollLeft + viewW) el.scrollLeft = Math.min(left - frozenW, right - viewW);
+    }
   };
 
   const select = (next: Selection, scroll = true) => {
@@ -779,6 +787,12 @@ function Spreadsheet({ docId }: { docId: string }) {
       setZoom(z);
       focusGrid();
     },
+    setFreeze: (axis, count) => {
+      const current = wb.getFreeze(activeSheet);
+      const next = axis === "rows" ? { ...current, rows: count } : { ...current, cols: count };
+      structural(() => wb.setFreeze(activeSheet, next));
+      focusGrid();
+    },
     toggleGridlines: () => {
       setGridlines((g) => !g);
       focusGrid();
@@ -948,6 +962,8 @@ function Spreadsheet({ docId }: { docId: string }) {
     sheets: wb.sheets,
     activeSheet,
     currency,
+    freeze: wb.getFreeze(activeSheet),
+    activeCell: active,
   };
 
   return (
@@ -1045,6 +1061,7 @@ function Spreadsheet({ docId }: { docId: string }) {
           sheet={activeSheet}
           layout={layout}
           gridlines={gridlines}
+          freeze={wb.getFreeze(activeSheet)}
           sel={sel}
           editing={editing}
           scrollRef={scrollRef}

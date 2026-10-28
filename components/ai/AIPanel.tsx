@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { CheckIcon, SparklesIcon, XIcon } from "@/components/ui/icons";
 import { describeSheet, type SheetContext } from "@/lib/ai/context";
 import type { AIRequest, AIResponse, AskResult, CheckResult, ExplainResult, FormulaResult } from "@/lib/ai/schemas";
 import {
@@ -124,10 +125,10 @@ export default function AIPanel(props: AIPanelProps) {
       className="fixed inset-0 z-40 flex flex-col bg-[var(--panel)] sm:static sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-[var(--border)]"
     >
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
-        <span className="text-base">✨</span>
+        <SparklesIcon size={17} className="text-[var(--accent)]" />
         <h2 className="flex-1 text-sm font-semibold">AI assistant</h2>
-        <button type="button" onClick={props.onClose} aria-label="Close AI assistant" className="rounded px-2 py-1 text-sm hover:bg-[var(--hover)]">
-          ✕
+        <button type="button" onClick={props.onClose} aria-label="Close AI assistant" className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--hover)]">
+          <XIcon size={16} />
         </button>
       </div>
       <div role="tablist" className="flex gap-1 border-b border-[var(--border)] px-2 py-1.5">
@@ -457,7 +458,10 @@ function CheckTab({ context, onInsert, onGoTo }: TabProps) {
         {busy ? "Checking…" : result ? "Check again" : "Check this tab"}
       </button>
       {error && <ErrorNote>{error}</ErrorNote>}
-      {result && result.value.issues.length === 0 && <p className="text-sm">No problems found. 🎉</p>}
+      {result && result.value.issues.length === 0 && <p className="flex items-center gap-2 text-sm">
+          <CheckIcon size={16} className="text-[var(--accent)]" />
+          No problems found.
+        </p>}
       {result?.value.issues.map((issue, i) => {
         const target = nameToAddress(issue.cell.replace(/^.*!/, ""));
         const fixProblem = issue.fix && isFormula(issue.fix) ? formulaProblem(issue.fix) : null;
@@ -481,7 +485,16 @@ function CheckTab({ context, onInsert, onGoTo }: TabProps) {
                 }}
                 className={secondaryButton}
               >
-                {applied.has(i) ? "Fixed ✓" : <>Set to <code className="font-mono">{issue.fix}</code></>}
+                {applied.has(i) ? (
+                  <span className="flex items-center gap-1.5">
+                    <CheckIcon size={14} />
+                    Fixed
+                  </span>
+                ) : (
+                  <>
+                    Set to <code className="font-mono">{issue.fix}</code>
+                  </>
+                )}
               </button>
             )}
           </div>

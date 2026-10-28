@@ -22,6 +22,13 @@ interface SheetState {
   formats: Map<string, CellFormat>;
   colWidths: Map<number, number>;
   rowHeights: Map<number, number>;
+  freeze: Freeze;
+}
+
+/** Rows at the top and columns at the left that stay in place while scrolling. */
+export interface Freeze {
+  rows: number;
+  cols: number;
 }
 
 export interface SheetInfo {
@@ -52,6 +59,7 @@ export interface SheetJSON {
   formats?: Record<string, CellFormat>;
   colWidths?: Record<string, number>;
   rowHeights?: Record<string, number>;
+  freeze?: Freeze;
 }
 
 export interface WorkbookJSON {
@@ -107,6 +115,7 @@ export class Workbook {
       }
       for (const [c, w] of Object.entries(s.colWidths ?? {})) sheet.colWidths.set(Number(c), w);
       for (const [r, h] of Object.entries(s.rowHeights ?? {})) sheet.rowHeights.set(Number(r), h);
+      if (s.freeze) sheet.freeze = { rows: Math.max(0, s.freeze.rows | 0), cols: Math.max(0, s.freeze.cols | 0) };
     }
     if (this.list.length === 0) this.createSheet("Sheet1");
     this.rebuild();
@@ -126,6 +135,7 @@ export class Workbook {
           formats,
           colWidths: Object.fromEntries(s.colWidths),
           rowHeights: Object.fromEntries(s.rowHeights),
+          ...(s.freeze.rows || s.freeze.cols ? { freeze: { ...s.freeze } } : {}),
         };
       }),
     };
@@ -185,6 +195,7 @@ export class Workbook {
     for (const [k, f] of src.formats) copy.formats.set(k, f);
     src.colWidths.forEach((w, c) => copy.colWidths.set(c, w));
     src.rowHeights.forEach((h, r) => copy.rowHeights.set(r, h));
+    copy.freeze = { ...src.freeze };
     this.rebuild();
     return copy.id;
   }
@@ -348,6 +359,14 @@ export class Workbook {
     else m.set(row, height);
   }
 
+  getFreeze(sheet: string): Freeze {
+    return this.byId.get(sheet)?.freeze ?? { rows: 0, cols: 0 };
+  }
+
+  setFreeze(sheet: string, freeze: Freeze) {
+    this.sheet(sheet).freeze = { rows: Math.max(0, freeze.rows | 0), cols: Math.max(0, freeze.cols | 0) };
+  }
+
   // ---- Structure -------------------------------------------------------------
 
   /** Inserts `count` blank rows or columns before index `at`. */
@@ -398,6 +417,16 @@ export class Workbook {
     if (axis === "row") target.rowHeights = remapSizes(target.rowHeights);
     else target.colWidths = remapSizes(target.colWidths);
 
+    // Rows or columns added or removed inside the frozen area grow or shrink it.
+    const key = axis === "row" ? "rows" : "cols";
+    const frozen = target.freeze[key];
+    if (at < frozen) {
+      target.freeze = {
+        ...target.freeze,
+        [key]: count > 0 ? frozen + count : Math.max(at, frozen - Math.min(-count, frozen - at)),
+      };
+    }
+
     const targetName = target.name.toLowerCase();
     this.forEachFormula((cell, owner) => {
       cell.raw = adjustForStructureChange(cell.raw, axis, at, count, (ctx) =>
@@ -437,6 +466,7 @@ export class Workbook {
       formats: new Map(),
       colWidths: new Map(),
       rowHeights: new Map(),
+      freeze: { rows: 0, cols: 0 },
     };
     this.list.push(sheet);
     this.byId.set(sheetId, sheet);

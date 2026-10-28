@@ -59,6 +59,26 @@ export const PrintIcon = icon([
   "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2",
   "M6 14h12v7H6z",
 ]);
+export const SparklesIcon = icon([
+  "M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.13 1.58a.5.5 0 0 1 0 .96l-6.13 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0Z",
+  "M20 3v4",
+  "M22 5h-4",
+]);
+export const XIcon = icon(["M18 6 6 18", "m6 6 12 12"]);
+export const ChevronUp = icon(["m18 15-6-6-6 6"]);
+export const DecimalDecreaseIcon = icon([
+  "m13 21-3-3 3-3",
+  "M20 18H10",
+  "M3 11h.01",
+  "M10 3a3 3 0 0 1 3 3v2a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z",
+]);
+export const DecimalIncreaseIcon = icon([
+  "M10 18h10",
+  "m17 21 3-3-3-3",
+  "M3 11h.01",
+  "M15 3a3 3 0 0 1 3 3v2a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z",
+  "M6 3a3 3 0 0 1 3 3v2a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z",
+]);
 export const SearchIcon = icon(["M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z", "m21 21-4.3-4.3"]);
 
 /** A letter with a colour bar underneath, for text and fill colour buttons. */

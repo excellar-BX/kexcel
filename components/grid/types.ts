@@ -1,6 +1,6 @@
 import type { AITab } from "@/components/ai/AIPanel";
 import type { BorderMode } from "@/components/ui/icons";
-import type { CellAddress, CellFormat, NumberFormat, SheetInfo } from "@/lib/engine";
+import type { CellAddress, CellFormat, Freeze, NumberFormat, SheetInfo } from "@/lib/engine";
 
 export interface Selection {
   /** The active cell, where the selection started. */
@@ -31,6 +31,8 @@ export interface EditorState {
   activeSheet: string;
   /** Currency the $ button applies. */
   currency: string;
+  freeze: Freeze;
+  activeCell: CellAddress;
 }
 
 /** Every action the menus, toolbar, shortcuts and right-click menu can trigger. */
@@ -77,6 +79,8 @@ export interface Commands {
   renameWorkbook(): void;
 
   setZoom(zoom: number): void;
+  /** Freezes this many rows or columns; 0 unfreezes. */
+  setFreeze(axis: "rows" | "cols", count: number): void;
   toggleGridlines(): void;
   showShortcuts(): void;
   openAI(tab: AITab): void;

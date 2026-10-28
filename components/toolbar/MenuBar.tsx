@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { MenuList, useDismiss, type MenuEntry } from "@/components/ui/Menu";
-import { CURRENCIES } from "@/lib/engine";
+import { colToLetters, CURRENCIES } from "@/lib/engine";
 import type { Commands, EditorState } from "@/components/grid/types";
 
 const mod = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
@@ -86,6 +86,30 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
       items: [
         { label: "Gridlines", checked: s.gridlines, onSelect: c.toggleGridlines },
         {
+          label: "Freeze",
+          items: [
+            { label: "No rows", checked: s.freeze.rows === 0, onSelect: () => c.setFreeze("rows", 0) },
+            { label: "1 row", checked: s.freeze.rows === 1, onSelect: () => c.setFreeze("rows", 1) },
+            { label: "2 rows", checked: s.freeze.rows === 2, onSelect: () => c.setFreeze("rows", 2) },
+            {
+              label: `Up to row ${s.activeCell.row + 1}`,
+              checked: s.freeze.rows > 2 && s.freeze.rows === s.activeCell.row + 1,
+              disabled: s.activeCell.row + 1 > 100,
+              onSelect: () => c.setFreeze("rows", s.activeCell.row + 1),
+            },
+            { type: "separator" },
+            { label: "No columns", checked: s.freeze.cols === 0, onSelect: () => c.setFreeze("cols", 0) },
+            { label: "1 column", checked: s.freeze.cols === 1, onSelect: () => c.setFreeze("cols", 1) },
+            { label: "2 columns", checked: s.freeze.cols === 2, onSelect: () => c.setFreeze("cols", 2) },
+            {
+              label: `Up to column ${colToLetters(s.activeCell.col)}`,
+              checked: s.freeze.cols > 2 && s.freeze.cols === s.activeCell.col + 1,
+              disabled: s.activeCell.col + 1 > 20,
+              onSelect: () => c.setFreeze("cols", s.activeCell.col + 1),
+            },
+          ],
+        },
+        {
           label: "Zoom",
           items: ZOOM_LEVELS.map((z) => ({
             label: `${Math.round(z * 100)}%`,
@@ -138,8 +162,8 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
     {
       label: "Data",
       items: [
-        { label: "Sort range A → Z", onSelect: () => c.sort(true) },
-        { label: "Sort range Z → A", onSelect: () => c.sort(false) },
+        { label: "Sort range A to Z", onSelect: () => c.sort(true) },
+        { label: "Sort range Z to A", onSelect: () => c.sort(false) },
       ],
     },
     {

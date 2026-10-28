@@ -281,6 +281,21 @@ describe("inserting and deleting rows and columns", () => {
   });
 });
 
+describe("freeze panes", () => {
+  it("saves, copies and adjusts frozen rows and columns", () => {
+    const { wb } = sheetWith({ A1: "x" });
+    wb.setFreeze("s1", { rows: 2, cols: 1 });
+    expect(Workbook.fromJSON(wb.toJSON()).getFreeze("s1")).toEqual({ rows: 2, cols: 1 });
+    expect(wb.getFreeze(wb.duplicateSheet("s1"))).toEqual({ rows: 2, cols: 1 });
+    wb.insert("s1", "row", 0, 3);
+    expect(wb.getFreeze("s1").rows).toBe(5);
+    wb.remove("s1", "row", 4, 3); // removes frozen row 5 and two below it
+    expect(wb.getFreeze("s1").rows).toBe(4);
+    wb.insert("s1", "col", 5, 1); // right of the frozen column: no change
+    expect(wb.getFreeze("s1").cols).toBe(1);
+  });
+});
+
 describe("patches and undo", () => {
   it("returns inverse patches that restore the previous state", () => {
     const { wb, raw } = sheetWith({ A1: "1" });

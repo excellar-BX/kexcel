@@ -9,6 +9,8 @@ import {
   BorderIcon,
   ChevronDown,
   ColorBarIcon,
+  DecimalDecreaseIcon,
+  DecimalIncreaseIcon,
   EraserIcon,
   FillIcon,
   MinusIcon,
@@ -16,6 +18,7 @@ import {
   PrintIcon,
   RedoIcon,
   SortIcon,
+  SparklesIcon,
   UndoIcon,
   type BorderMode,
 } from "@/components/ui/icons";
@@ -216,10 +219,10 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
         <span className="font-medium">%</span>
       </Button>
       <Button label="Decrease decimal places" onClick={() => c.changeDecimals(-1)}>
-        <span className="text-[11px] font-semibold tracking-tight">.0←</span>
+        <DecimalDecreaseIcon size={17} />
       </Button>
       <Button label="Increase decimal places" onClick={() => c.changeDecimals(1)}>
-        <span className="text-[11px] font-semibold tracking-tight">.00→</span>
+        <DecimalIncreaseIcon size={17} />
       </Button>
       <MenuDropdown title="More number formats" label={<span className="text-xs font-medium">123</span>} items={numberFormatItems(c, s)} />
       <Divider />
@@ -309,7 +312,7 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
       <Button label={`Clear formatting (${mod}\\)`} onClick={c.clearFormatting}>
         <EraserIcon size={17} />
       </Button>
-      <Button label="Sort range A → Z" onClick={() => c.sort(true)}>
+      <Button label="Sort range A to Z" onClick={() => c.sort(true)}>
         <SortIcon size={17} />
       </Button>
       <MenuDropdown
@@ -319,7 +322,7 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
       />
       <Divider />
       <Button label="AI assistant: write, explain and check formulas" onClick={() => c.openAI("formula")} wide>
-        <span>✨</span>
+        <SparklesIcon size={16} className="text-[var(--accent)]" />
         <span className="font-medium">AI</span>
       </Button>
     </div>

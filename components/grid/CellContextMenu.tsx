@@ -32,8 +32,8 @@ export default function CellContextMenu({
   ];
   const sort: MenuEntry[] = [
     { type: "separator" },
-    { label: "Sort A → Z", onSelect: () => c.sort(true) },
-    { label: "Sort Z → A", onSelect: () => c.sort(false) },
+    { label: "Sort A to Z", onSelect: () => c.sort(true) },
+    { label: "Sort Z to A", onSelect: () => c.sort(false) },
   ];
 
   const items =

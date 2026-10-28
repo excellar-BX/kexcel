@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SearchIcon } from "@/components/ui/icons";
+import { ChevronDown, ChevronUp, SearchIcon, XIcon } from "@/components/ui/icons";
 import { formatValue, parseKey, type CellAddress, type Workbook } from "@/lib/engine";
 
 /** Cells whose shown text or formula contains the query, in reading order. */
@@ -71,14 +71,14 @@ export default function FindBar({
       <span className="min-w-14 text-right text-xs tabular-nums text-[var(--muted)]">
         {query ? `${matches.length ? Math.max(index, 0) + 1 : 0} of ${matches.length}` : ""}
       </span>
-      <button type="button" onClick={() => go(-1)} aria-label="Previous match" className="rounded px-1 hover:bg-[var(--hover)]">
-        ↑
+      <button type="button" onClick={() => go(-1)} aria-label="Previous match" className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--hover)]">
+        <ChevronUp size={15} />
       </button>
-      <button type="button" onClick={() => go(1)} aria-label="Next match" className="rounded px-1 hover:bg-[var(--hover)]">
-        ↓
+      <button type="button" onClick={() => go(1)} aria-label="Next match" className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--hover)]">
+        <ChevronDown size={15} />
       </button>
-      <button type="button" onClick={onClose} aria-label="Close find" className="rounded px-1 hover:bg-[var(--hover)]">
-        ✕
+      <button type="button" onClick={onClose} aria-label="Close find" className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--hover)]">
+        <XIcon size={15} />
       </button>
     </div>
   );

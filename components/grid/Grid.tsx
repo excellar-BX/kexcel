@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
-import { colToLetters, formatValue, isError, type CellAddress, type CellFormat, type Workbook } from "@/lib/engine";
+import {
+  colToLetters,
+  formatValue,
+  isError,
+  type CellAddress,
+  type CellFormat,
+  type Freeze,
+  type Workbook,
+} from "@/lib/engine";
 import type { Range } from "@/lib/sheet-ops";
 import { COL_COUNT, MIN_COL_WIDTH, OVERSCAN, ROW_COUNT, ROW_HEIGHT } from "./constants";
 import { ptToPx, type GridLayout } from "./layout";
@@ -52,6 +60,7 @@ export interface GridProps {
   sheet: string;
   layout: GridLayout;
   gridlines: boolean;
+  freeze: Freeze;
   sel: Selection;
   editing: Editing | null;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -71,9 +80,12 @@ export interface GridProps {
 }
 
 export default function Grid(props: GridProps) {
-  const { wb, sheet, layout, gridlines, sel, editing, scrollRef } = props;
+  const { wb, sheet, layout, gridlines, freeze, sel, editing, scrollRef } = props;
   const z = layout.zoom;
-  const cellsRef = useRef<HTMLDivElement>(null);
+  const fr = Math.min(freeze.rows, ROW_COUNT - 1);
+  const fc = Math.min(freeze.cols, COL_COUNT - 1);
+  const frozenH = layout.rowTop(fr);
+  const frozenW = layout.colLeft(fc);
   const frameRef = useRef(0);
   const [viewport, setViewport] = useState<Viewport>({ top: 0, left: 0, width: 1200, height: 800 });
   const [fillPreview, setFillPreview] = useState<Range | null>(null);
@@ -98,9 +110,15 @@ export default function Grid(props: GridProps) {
 
   // ---- Mouse -----------------------------------------------------------------
 
+  /** The cell under a point. Inside the frozen area positions don't scroll; elsewhere they do. */
   const pointToCell = (clientX: number, clientY: number): CellAddress => {
-    const rect = cellsRef.current!.getBoundingClientRect();
-    return { row: layout.rowAt(clientY - rect.top), col: layout.colAt(clientX - rect.left) };
+    const el = scrollRef.current!;
+    const rect = el.getBoundingClientRect();
+    const vx = clientX - rect.left - layout.headerWidth;
+    const vy = clientY - rect.top - layout.headerHeight;
+    const x = vx < frozenW ? vx : vx + el.scrollLeft;
+    const y = vy < frozenH ? vy : vy + el.scrollTop;
+    return { row: layout.rowAt(y), col: layout.colAt(x) };
   };
 
   /** Scrolls when a drag reaches past the edge of the grid. */
@@ -218,96 +236,105 @@ export default function Grid(props: GridProps) {
 
   // ---- Visible window --------------------------------------------------------
 
-  const rowStart = Math.max(0, layout.rowAt(viewport.top) - OVERSCAN);
+  // Frozen rows and columns are drawn in their own pinned layers; the main layer
+  // scrolls underneath them. All layers share the grid's coordinates.
+  const rowStart = Math.max(fr, layout.rowAt(viewport.top + frozenH) - OVERSCAN);
   const rowEnd = Math.min(ROW_COUNT - 1, layout.rowAt(viewport.top + viewport.height) + OVERSCAN);
-  const colStart = Math.max(0, layout.colAt(viewport.left) - 1);
+  const colStart = Math.max(fc, layout.colAt(viewport.left + frozenW) - 1);
   const colEnd = Math.min(COL_COUNT - 1, layout.colAt(viewport.left + viewport.width) + 1);
 
-  const fills: React.ReactNode[] = [];
-  const texts: React.ReactNode[] = [];
-  for (let row = rowStart; row <= rowEnd; row++) {
-    const top = layout.rowTop(row);
-    const height = layout.rowHeight(row);
-    for (let col = colStart; col <= colEnd; col++) {
-      const format = wb.getFormat(sheet, row, col);
-      const left = layout.colLeft(col);
-      const width = layout.colWidth(col);
+  type Layer = "main" | "top" | "left" | "corner";
+  const layerOf = (row: number, col: number): Layer =>
+    row < fr ? (col < fc ? "corner" : "top") : col < fc ? "left" : "main";
 
-      if (format?.fill || format?.borders) {
-        const b = format.borders;
-        const line = "1px solid var(--fg)";
-        fills.push(
+  /** Fills, borders, gridlines and text for a block of cells. */
+  const renderCells = (r0: number, r1: number, c0: number, c1: number): React.ReactNode[] => {
+    const fills: React.ReactNode[] = [];
+    const lines: React.ReactNode[] = [];
+    const texts: React.ReactNode[] = [];
+    for (let row = r0; row <= r1; row++) {
+      const top = layout.rowTop(row);
+      const height = layout.rowHeight(row);
+      for (let col = c0; col <= c1; col++) {
+        const format = wb.getFormat(sheet, row, col);
+        const left = layout.colLeft(col);
+        const width = layout.colWidth(col);
+
+        if (format?.fill || format?.borders) {
+          const b = format.borders;
+          const line = "1px solid var(--fg)";
+          fills.push(
+            <div
+              key={`f${row},${col}`}
+              className="absolute"
+              style={{
+                left: left - (b?.left ? 1 : 0),
+                top: top - (b?.top ? 1 : 0),
+                width: width + (b?.left ? 1 : 0),
+                height: height + (b?.top ? 1 : 0),
+                background: format.fill,
+                borderTop: b?.top ? line : undefined,
+                borderLeft: b?.left ? line : undefined,
+                borderRight: b?.right ? line : undefined,
+                borderBottom: b?.bottom ? line : undefined,
+              }}
+            />,
+          );
+        }
+
+        const value = wb.getValue(sheet, row, col);
+        if (value === null) continue;
+        const error = isError(value);
+        const defaultAlign = typeof value === "number" ? "right" : typeof value === "string" ? "left" : "center";
+        const align = format?.align ?? defaultAlign;
+        let textWidth = width;
+        // Text spills into empty neighbours on the right, as in other spreadsheets.
+        if (align === "left" && typeof value === "string") {
+          for (let c = col + 1; c <= c1 && wb.getRaw(sheet, row, c) === ""; c++) textWidth += layout.colWidth(c);
+        }
+        texts.push(
           <div
-            key={`f${row},${col}`}
-            className="absolute"
+            key={`t${row},${col}`}
+            className={`pointer-events-none absolute overflow-hidden whitespace-pre ${error ? "text-[var(--error)]" : ""}`}
             style={{
-              left: left - (b?.left ? 1 : 0),
-              top: top - (b?.top ? 1 : 0),
-              width: width + (b?.left ? 1 : 0),
-              height: height + (b?.top ? 1 : 0),
-              background: format.fill,
-              borderTop: b?.top ? line : undefined,
-              borderLeft: b?.left ? line : undefined,
-              borderRight: b?.right ? line : undefined,
-              borderBottom: b?.bottom ? line : undefined,
+              left,
+              top,
+              width: textWidth,
+              height,
+              lineHeight: `${height}px`,
+              padding: `0 ${4 * z}px`,
+              textAlign: align,
+              ...textStyle(format, z),
             }}
+            title={error ? value.message : undefined}
+          >
+            {formatValue(value, format)}
+          </div>,
+        );
+      }
+    }
+    if (gridlines) {
+      for (let col = c0; col <= c1; col++) {
+        lines.push(
+          <div
+            key={`v${col}`}
+            className="absolute top-0 h-full w-px bg-[var(--grid-line)]"
+            style={{ left: layout.colLeft(col + 1) - 1 }}
           />,
         );
       }
-
-      const value = wb.getValue(sheet, row, col);
-      if (value === null) continue;
-      const error = isError(value);
-      const defaultAlign = typeof value === "number" ? "right" : typeof value === "string" ? "left" : "center";
-      const align = format?.align ?? defaultAlign;
-      let textWidth = width;
-      // Text spills into empty neighbours on the right, as in other spreadsheets.
-      if (align === "left" && typeof value === "string") {
-        for (let c = col + 1; c <= colEnd && wb.getRaw(sheet, row, c) === ""; c++) textWidth += layout.colWidth(c);
+      for (let row = r0; row <= r1; row++) {
+        lines.push(
+          <div
+            key={`h${row}`}
+            className="absolute left-0 h-px w-full bg-[var(--grid-line)]"
+            style={{ top: layout.rowTop(row + 1) - 1 }}
+          />,
+        );
       }
-      texts.push(
-        <div
-          key={`t${row},${col}`}
-          className={`pointer-events-none absolute overflow-hidden whitespace-pre ${error ? "text-[var(--error)]" : ""}`}
-          style={{
-            left,
-            top,
-            width: textWidth,
-            height,
-            lineHeight: `${height}px`,
-            padding: `0 ${4 * z}px`,
-            textAlign: align,
-            ...textStyle(format, z),
-          }}
-          title={error ? value.message : undefined}
-        >
-          {formatValue(value, format)}
-        </div>,
-      );
     }
-  }
-
-  const lines: React.ReactNode[] = [];
-  if (gridlines) {
-    for (let col = colStart; col <= colEnd; col++) {
-      lines.push(
-        <div
-          key={`v${col}`}
-          className="absolute top-0 h-full w-px bg-[var(--grid-line)]"
-          style={{ left: layout.colLeft(col + 1) - 1 }}
-        />,
-      );
-    }
-    for (let row = rowStart; row <= rowEnd; row++) {
-      lines.push(
-        <div
-          key={`h${row}`}
-          className="absolute left-0 h-px w-full bg-[var(--grid-line)]"
-          style={{ top: layout.rowTop(row + 1) - 1 }}
-        />,
-      );
-    }
-  }
+    return [...fills, ...lines, ...texts];
+  };
 
   const box = (r: Range) => ({
     left: layout.colLeft(r.c0) - 1,
@@ -318,6 +345,114 @@ export default function Grid(props: GridProps) {
   const selBox = box(range);
   const active = sel.anchor;
   const headerFont = 11 * z;
+
+  /** Selection, fill handle and editor, drawn in every layer and clipped by it. */
+  const overlays = (layer: Layer) => (
+    <>
+      <div className="pointer-events-none absolute border border-[var(--accent)] bg-[var(--selection)]" style={selBox} />
+      <div
+        className="pointer-events-none absolute border-2 border-[var(--accent)]"
+        style={box({ r0: active.row, r1: active.row, c0: active.col, c1: active.col })}
+      />
+      {fillPreview && (
+        <div className="pointer-events-none absolute border-2 border-dashed border-[var(--accent)]" style={box(fillPreview)} />
+      )}
+      {!editing && layerOf(range.r1, range.c1) === layer && (
+        <div
+          onMouseDown={onFillHandleMouseDown}
+          title="Drag to fill"
+          className="absolute z-[5] h-2 w-2 cursor-crosshair border border-[var(--bg)] bg-[var(--accent)]"
+          style={{ left: selBox.left + selBox.width - 4, top: selBox.top + selBox.height - 4 }}
+        />
+      )}
+      {editing && layerOf(editing.row, editing.col) === layer && (
+        <input
+          value={editing.value}
+          autoFocus={editing.source === "cell"}
+          onFocus={props.onEditorFocus}
+          onChange={(e) => props.onEditorChange(e.target.value)}
+          onKeyDown={props.onEditorKeyDown}
+          onMouseDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          spellCheck={false}
+          aria-label="Cell editor"
+          className="absolute z-10 border-2 border-[var(--accent)] bg-[var(--bg)] text-[var(--fg)] shadow-lg outline-none"
+          style={{
+            ...box({ r0: editing.row, r1: editing.row, c0: editing.col, c1: editing.col }),
+            width: Math.min(600 * z, Math.max(layout.colWidth(editing.col) + 1, (editing.value.length * 8 + 24) * z)),
+            padding: `0 ${3 * z}px`,
+            ...textStyle(wb.getFormat(sheet, editing.row, editing.col), z),
+            color: undefined,
+          }}
+        />
+      )}
+    </>
+  );
+
+  const cellHandlers = {
+    onMouseDown: onCellsMouseDown,
+    onDoubleClick: props.onEdit,
+    onContextMenu: (e: React.MouseEvent) => onContextMenu(e, "cell"),
+  };
+
+  /** The heavier line along the edge of the frozen area. */
+  const freezeEdge = (side: "bottom" | "right") => (
+    <div
+      className={`pointer-events-none absolute bg-[var(--muted)]/45 ${
+        side === "bottom" ? "bottom-0 left-0 h-[2px] w-full" : "right-0 top-0 h-full w-[2px]"
+      }`}
+    />
+  );
+
+  const colHeader = (col: number) => {
+    const selected = col >= range.c0 && col <= range.c1;
+    return (
+      <div
+        key={col}
+        onMouseDown={(e) => onColumnHeaderMouseDown(e, col)}
+        onContextMenu={(e) => onContextMenu(e, "col", col)}
+        className={`absolute top-0 grid h-full place-items-center border-r border-[var(--grid-line)] ${
+          selected ? "bg-[var(--header-selected)] font-semibold text-[var(--accent)]" : "text-[var(--muted)]"
+        }`}
+        style={{ left: layout.colLeft(col), width: layout.colWidth(col), fontSize: headerFont }}
+      >
+        {colToLetters(col)}
+        <div
+          onMouseDown={(e) => onColResizeMouseDown(e, col)}
+          onDoubleClick={() => props.onAutoFitCol(col)}
+          title="Drag to resize, double-click to fit"
+          className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-[var(--accent)]/40"
+        />
+      </div>
+    );
+  };
+
+  const rowHeader = (row: number) => {
+    const selected = row >= range.r0 && row <= range.r1;
+    return (
+      <div
+        key={row}
+        onMouseDown={(e) => onRowHeaderMouseDown(e, row)}
+        onContextMenu={(e) => onContextMenu(e, "row", row)}
+        className={`absolute left-0 grid w-full place-items-center border-b border-[var(--grid-line)] ${
+          selected ? "bg-[var(--header-selected)] font-semibold text-[var(--accent)]" : "text-[var(--muted)]"
+        }`}
+        style={{ top: layout.rowTop(row), height: layout.rowHeight(row), fontSize: headerFont }}
+      >
+        {row + 1}
+        <div
+          onMouseDown={(e) => onRowResizeMouseDown(e, row)}
+          onDoubleClick={() => props.onRowResize(row, ROW_HEIGHT)}
+          title="Drag to resize, double-click to reset"
+          className="absolute -bottom-1 left-0 z-10 h-2 w-full cursor-row-resize hover:bg-[var(--accent)]/40"
+        />
+      </div>
+    );
+  };
+
+  const span = (from: number, to: number) => Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i);
+  const headerW = layout.headerWidth;
+  const headerH = layout.headerHeight;
 
   return (
     <div
@@ -331,139 +466,102 @@ export default function Grid(props: GridProps) {
       aria-rowcount={ROW_COUNT}
       aria-colcount={COL_COUNT}
     >
-      <div style={{ width: layout.headerWidth + layout.totalWidth, height: layout.headerHeight + layout.totalHeight }}>
+      <div style={{ width: headerW + layout.totalWidth, height: headerH + layout.totalHeight }}>
         {/* Column headers */}
         <div
-          className="sticky top-0 z-20 flex border-b border-[var(--border)] bg-[var(--header-bg)]"
-          style={{ height: layout.headerHeight, width: layout.headerWidth + layout.totalWidth }}
+          className="sticky top-0 z-30 flex border-b border-[var(--border)] bg-[var(--header-bg)]"
+          style={{ height: headerH, width: headerW + layout.totalWidth }}
         >
           <div
-            className="sticky left-0 z-30 shrink-0 border-r border-[var(--border)] bg-[var(--header-bg)] hover:bg-[var(--hover)]"
-            style={{ width: layout.headerWidth }}
+            className="sticky left-0 z-40 shrink-0 border-r border-[var(--border)] bg-[var(--header-bg)] hover:bg-[var(--hover)]"
+            style={{ width: headerW }}
             onMouseDown={() => {
               props.onPointerStart();
               props.onSelect({ anchor: { row: 0, col: 0 }, focus: { row: ROW_COUNT - 1, col: COL_COUNT - 1 } });
             }}
             title="Select all"
           />
+          {fc > 0 && (
+            <div
+              className="sticky z-[35] h-full shrink-0 bg-[var(--header-bg)]"
+              style={{ left: headerW, width: frozenW, marginRight: -frozenW }}
+            >
+              {span(0, fc - 1).map(colHeader)}
+              {freezeEdge("right")}
+            </div>
+          )}
           <div className="relative" style={{ width: layout.totalWidth }}>
-            {Array.from({ length: colEnd - colStart + 1 }, (_, i) => {
-              const col = colStart + i;
-              const selected = col >= range.c0 && col <= range.c1;
-              return (
-                <div
-                  key={col}
-                  onMouseDown={(e) => onColumnHeaderMouseDown(e, col)}
-                  onContextMenu={(e) => onContextMenu(e, "col", col)}
-                  className={`absolute top-0 grid h-full place-items-center border-r border-[var(--grid-line)] ${
-                    selected ? "bg-[var(--header-selected)] font-semibold text-[var(--accent)]" : "text-[var(--muted)]"
-                  }`}
-                  style={{ left: layout.colLeft(col), width: layout.colWidth(col), fontSize: headerFont }}
-                >
-                  {colToLetters(col)}
-                  <div
-                    onMouseDown={(e) => onColResizeMouseDown(e, col)}
-                    onDoubleClick={() => props.onAutoFitCol(col)}
-                    title="Drag to resize, double-click to fit"
-                    className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-[var(--accent)]/40"
-                  />
-                </div>
-              );
-            })}
+            {span(colStart, colEnd).map(colHeader)}
           </div>
         </div>
+
+        {/* Frozen rows, pinned under the column headers */}
+        {fr > 0 && (
+          <div
+            className="sticky z-20 flex"
+            style={{ top: headerH, height: frozenH, marginBottom: -frozenH, width: headerW + layout.totalWidth }}
+          >
+            <div
+              className="sticky left-0 z-[3] shrink-0 border-r border-[var(--border)] bg-[var(--header-bg)]"
+              style={{ width: headerW, height: frozenH }}
+            >
+              {span(0, fr - 1).map(rowHeader)}
+              {freezeEdge("bottom")}
+            </div>
+            {fc > 0 && (
+              <div
+                className="sticky z-[2] shrink-0 overflow-hidden bg-[var(--bg)]"
+                style={{ left: headerW, width: frozenW, height: frozenH, marginRight: -frozenW }}
+                {...cellHandlers}
+              >
+                {renderCells(0, fr - 1, 0, fc - 1)}
+                {overlays("corner")}
+                {freezeEdge("bottom")}
+                {freezeEdge("right")}
+              </div>
+            )}
+            <div
+              className="relative shrink-0 overflow-hidden bg-[var(--bg)]"
+              style={{ width: layout.totalWidth, height: frozenH }}
+              {...cellHandlers}
+            >
+              {renderCells(0, fr - 1, colStart, colEnd)}
+              {overlays("top")}
+              {freezeEdge("bottom")}
+            </div>
+          </div>
+        )}
 
         <div className="flex">
           {/* Row headers */}
           <div
             className="sticky left-0 z-10 shrink-0 border-r border-[var(--border)] bg-[var(--header-bg)]"
-            style={{ width: layout.headerWidth, height: layout.totalHeight }}
+            style={{ width: headerW, height: layout.totalHeight }}
           >
-            {Array.from({ length: rowEnd - rowStart + 1 }, (_, i) => {
-              const row = rowStart + i;
-              const selected = row >= range.r0 && row <= range.r1;
-              return (
-                <div
-                  key={row}
-                  onMouseDown={(e) => onRowHeaderMouseDown(e, row)}
-                  onContextMenu={(e) => onContextMenu(e, "row", row)}
-                  className={`absolute left-0 grid w-full place-items-center border-b border-[var(--grid-line)] ${
-                    selected ? "bg-[var(--header-selected)] font-semibold text-[var(--accent)]" : "text-[var(--muted)]"
-                  }`}
-                  style={{ top: layout.rowTop(row), height: layout.rowHeight(row), fontSize: headerFont }}
-                >
-                  {row + 1}
-                  <div
-                    onMouseDown={(e) => onRowResizeMouseDown(e, row)}
-                    onDoubleClick={() => props.onRowResize(row, ROW_HEIGHT)}
-                    title="Drag to resize, double-click to reset"
-                    className="absolute -bottom-1 left-0 z-10 h-2 w-full cursor-row-resize hover:bg-[var(--accent)]/40"
-                  />
-                </div>
-              );
-            })}
+            {span(rowStart, rowEnd).map(rowHeader)}
           </div>
+
+          {/* Frozen columns, pinned beside the row headers */}
+          {fc > 0 && (
+            <div
+              className="sticky z-[5] shrink-0 overflow-hidden bg-[var(--bg)]"
+              style={{ left: headerW, width: frozenW, height: layout.totalHeight, marginRight: -frozenW }}
+              {...cellHandlers}
+            >
+              {renderCells(rowStart, rowEnd, 0, fc - 1)}
+              {overlays("left")}
+              {freezeEdge("right")}
+            </div>
+          )}
 
           {/* Cells */}
           <div
-            ref={cellsRef}
-            className="relative overflow-hidden"
+            className="relative shrink-0 overflow-hidden"
             style={{ width: layout.totalWidth, height: layout.totalHeight }}
-            onMouseDown={onCellsMouseDown}
-            onDoubleClick={props.onEdit}
-            onContextMenu={(e) => onContextMenu(e, "cell")}
+            {...cellHandlers}
           >
-            {fills}
-            {lines}
-            {texts}
-
-            <div
-              className="pointer-events-none absolute border border-[var(--accent)] bg-[var(--selection)]"
-              style={selBox}
-            />
-            <div
-              className="pointer-events-none absolute border-2 border-[var(--accent)]"
-              style={box({ r0: active.row, r1: active.row, c0: active.col, c1: active.col })}
-            />
-            {fillPreview && (
-              <div
-                className="pointer-events-none absolute border-2 border-dashed border-[var(--accent)]"
-                style={box(fillPreview)}
-              />
-            )}
-            {!editing && (
-              <div
-                onMouseDown={onFillHandleMouseDown}
-                title="Drag to fill"
-                className="absolute z-[5] h-2 w-2 cursor-crosshair border border-[var(--bg)] bg-[var(--accent)]"
-                style={{ left: selBox.left + selBox.width - 4, top: selBox.top + selBox.height - 4 }}
-              />
-            )}
-
-            {editing && (
-              <input
-                value={editing.value}
-                autoFocus={editing.source === "cell"}
-                onFocus={props.onEditorFocus}
-                onChange={(e) => props.onEditorChange(e.target.value)}
-                onKeyDown={props.onEditorKeyDown}
-                onMouseDown={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
-                spellCheck={false}
-                aria-label="Cell editor"
-                className="absolute z-10 border-2 border-[var(--accent)] bg-[var(--bg)] text-[var(--fg)] shadow-lg outline-none"
-                style={{
-                  ...box({ r0: editing.row, r1: editing.row, c0: editing.col, c1: editing.col }),
-                  width: Math.min(
-                    600 * z,
-                    Math.max(layout.colWidth(editing.col) + 1, (editing.value.length * 8 + 24) * z),
-                  ),
-                  padding: `0 ${3 * z}px`,
-                  ...textStyle(wb.getFormat(sheet, editing.row, editing.col), z),
-                  color: undefined,
-                }}
-              />
-            )}
+            {renderCells(rowStart, rowEnd, colStart, colEnd)}
+            {overlays("main")}
           </div>
         </div>
       </div>
