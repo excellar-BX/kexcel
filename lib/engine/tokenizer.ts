@@ -15,6 +15,8 @@ export type Token =
   | { type: "ident"; value: string; start: number; end: number }
   | { type: "op"; value: string; start: number; end: number }
   | { type: "refError"; start: number; end: number }
+  /** A sheet prefix such as `Sheet2!` or `'My data'!`; the reference follows it. */
+  | { type: "sheet"; name: string; start: number; end: number }
   | { type: "lparen" | "rparen" | "comma" | "colon"; start: number; end: number };
 
 export class FormulaSyntaxError extends Error {}
@@ -22,6 +24,7 @@ export class FormulaSyntaxError extends Error {}
 const NUMBER_RE = /(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/y;
 const REF_RE = /(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?![A-Za-z0-9_(])/y;
 const IDENT_RE = /[A-Za-z_][A-Za-z0-9_.]*/y;
+const SHEET_RE = /([A-Za-z_][A-Za-z0-9_.]*)!/y;
 const TWO_CHAR_OPS = ["<=", ">=", "<>"];
 const ONE_CHAR_OPS = "+-*/^&=<>%";
 
@@ -63,6 +66,27 @@ export function tokenize(src: string): Token[] {
       continue;
     }
 
+    if (ch === "'") {
+      let name = "";
+      let j = i + 1;
+      for (;;) {
+        if (j >= src.length) throw new FormulaSyntaxError("Unclosed sheet name");
+        if (src[j] === "'") {
+          if (src[j + 1] === "'") {
+            name += "'";
+            j += 2;
+            continue;
+          }
+          break;
+        }
+        name += src[j++];
+      }
+      if (src[j + 1] !== "!") throw new FormulaSyntaxError("Expected ! after sheet name");
+      tokens.push({ type: "sheet", name, start: i, end: j + 2 });
+      i = j + 2;
+      continue;
+    }
+
     if (src.startsWith("#REF!", i)) {
       tokens.push({ type: "refError", start: i, end: i + 5 });
       i += 5;
@@ -78,7 +102,13 @@ export function tokenize(src: string): Token[] {
       }
     }
 
-    if (ch === "$" || /[A-Za-z]/.test(ch)) {
+    if (ch === "$" || /[A-Za-z_]/.test(ch)) {
+      const sheet = matchAt(SHEET_RE);
+      if (sheet) {
+        tokens.push({ type: "sheet", name: sheet[1], start: i, end: i + sheet[0].length });
+        i += sheet[0].length;
+        continue;
+      }
       const ref = matchAt(REF_RE);
       if (ref) {
         tokens.push({

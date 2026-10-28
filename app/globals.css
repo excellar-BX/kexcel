@@ -9,6 +9,8 @@
   --header-bg: #f8f9fa;
   --header-selected: #e3ecfd;
   --hover: #f1f3f5;
+  --panel: #ffffff;
+  --toolbar: #eef2f8;
   --accent: #1a73e8;
   --selection: rgba(26, 115, 232, 0.08);
   --error: #d93025;
@@ -24,6 +26,8 @@
     --header-bg: #1e2024;
     --header-selected: #23324a;
     --hover: #24272c;
+    --panel: #1f2125;
+    --toolbar: #202329;
     --accent: #6ea8fe;
     --selection: rgba(110, 168, 254, 0.12);
     --error: #f28b82;
@@ -39,6 +43,8 @@
   --header-bg: #1e2024;
   --header-selected: #23324a;
   --hover: #24272c;
+  --panel: #1f2125;
+  --toolbar: #202329;
   --accent: #6ea8fe;
   --selection: rgba(110, 168, 254, 0.12);
   --error: #f28b82;

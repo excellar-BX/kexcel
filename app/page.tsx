@@ -1,9 +1,9 @@
 import { SheetList } from "@/components/ClientOnly";
 
 const FEATURES = [
-  { title: "Live formulas", body: "SUM, IF, VLOOKUP, COUNTIF and 40+ functions that recalculate instantly." },
-  { title: "Keyboard-first", body: "Arrows, Ctrl+arrows, Tab, Enter, copy and paste with Excel and Google Sheets." },
-  { title: "Saved as you type", body: "Your sheets stay on this device, even offline." },
+  { title: "Live formulas", body: "SUM, IF, VLOOKUP, COUNTIF and 40+ functions, across tabs with Sheet2!A1." },
+  { title: "Format like a pro", body: "Currency, percents, fonts, colours, borders and alignment from one toolbar." },
+  { title: "Saved as you type", body: "Your spreadsheets stay on this device, even offline. Import and export CSV." },
 ];
 
 export default function Home() {

@@ -1,14 +1,19 @@
-// Tab-separated text is what Excel, Google Sheets and most apps put on the clipboard.
+// Tab-separated text is what Excel, Google Sheets and most apps put on the clipboard;
+// comma-separated is the CSV file format. Both quote fields the same way.
 
-const needsQuotes = (s: string) => /[\t\n\r"]/.test(s);
-
-export function toTSV(rows: string[][]): string {
+export function toDelimited(rows: string[][], delimiter: string): string {
+  const needsQuotes = (v: string) => v.includes(delimiter) || /[\n\r"]/.test(v);
   return rows
-    .map((row) => row.map((v) => (needsQuotes(v) ? `"${v.replace(/"/g, '""')}"` : v)).join("\t"))
+    .map((row) => row.map((v) => (needsQuotes(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(delimiter))
     .join("\n");
 }
 
-export function parseTSV(text: string): string[][] {
+export const toTSV = (rows: string[][]) => toDelimited(rows, "\t");
+export const toCSV = (rows: string[][]) => toDelimited(rows, ",");
+export const parseTSV = (text: string) => parseDelimited(text, "\t");
+export const parseCSV = (text: string) => parseDelimited(text.replace(/^﻿/, ""), ",");
+
+export function parseDelimited(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -42,7 +47,7 @@ export function parseTSV(text: string): string[][] {
       i++;
       continue;
     }
-    if (ch === "\t") {
+    if (ch === delimiter) {
       row.push(field);
       field = "";
     } else if (ch === "\n") {

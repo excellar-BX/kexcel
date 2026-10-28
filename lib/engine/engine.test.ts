@@ -1,20 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { colToLetters, lettersToCol, nameToAddress } from "./address";
-import { displayValue, Sheet, shiftFormula } from "./sheet";
-import { parseTSV, toTSV } from "../tsv";
+import { displayValue, formatValue } from "./format";
+import { adjustForStructureChange, renameSheetInFormula, shiftFormula } from "./references";
+import { Workbook } from "./workbook";
+import { parseCSV, parseTSV, toCSV, toTSV } from "../tsv";
+import { fillPatches, sortPatches } from "../sheet-ops";
 
-/** Builds a sheet from { A1: "...", ... } and returns a display-value reader. */
+/** Builds a one-sheet workbook from { A1: "...", ... } with helpers addressed by cell name. */
 function sheetWith(cells: Record<string, string>) {
-  const sheet = Sheet.fromJSON(cells);
+  const wb = Workbook.fromJSON({ sheets: [{ id: "s1", name: "Sheet1", cells }] });
+  const sheet = {
+    getValue: (row: number, col: number) => wb.getValue("s1", row, col),
+  };
   const show = (name: string) => {
     const a = nameToAddress(name)!;
-    return displayValue(sheet.getValue(a.row, a.col));
+    return displayValue(wb.getValue("s1", a.row, a.col));
   };
-  const set = (name: string, raw: string) => {
+  const raw = (name: string) => {
     const a = nameToAddress(name)!;
-    sheet.setCell(a.row, a.col, raw);
+    return wb.getRaw("s1", a.row, a.col);
   };
-  return { sheet, show, set };
+  const set = (name: string, value: string) => {
+    const a = nameToAddress(name)!;
+    wb.setCell("s1", a.row, a.col, value);
+  };
+  return { wb, sheet, show, raw, set };
 }
 
 const calc = (formula: string, cells: Record<string, string> = {}) =>
@@ -173,9 +183,147 @@ describe("recalculation", () => {
   });
 
   it("round-trips through JSON", () => {
-    const { sheet } = sheetWith({ A1: "3", B2: "=A1*2" });
-    const copy = Sheet.fromJSON(sheet.toJSON());
-    expect(copy.getValue(1, 1)).toBe(6);
+    const { wb } = sheetWith({ A1: "3", B2: "=A1*2" });
+    wb.setFormat("s1", 0, 0, { bold: true });
+    const copy = Workbook.fromJSON(wb.toJSON());
+    expect(copy.getValue("s1", 1, 1)).toBe(6);
+    expect(copy.getFormat("s1", 0, 0)).toEqual({ bold: true });
+  });
+});
+
+describe("multiple sheets", () => {
+  function twoSheets() {
+    return Workbook.fromJSON({
+      sheets: [
+        { id: "s1", name: "Sheet1", cells: { A1: "=Sales!B2*2", A2: "='My data'!A1+1" } },
+        { id: "s2", name: "Sales", cells: { B2: "21" } },
+        { id: "s3", name: "My data", cells: { A1: "9" } },
+      ],
+    });
+  }
+
+  it("reads cells on other sheets", () => {
+    const wb = twoSheets();
+    expect(wb.getValue("s1", 0, 0)).toBe(42);
+    expect(wb.getValue("s1", 1, 0)).toBe(10);
+    wb.setCell("s2", 1, 1, "50");
+    expect(wb.getValue("s1", 0, 0)).toBe(100);
+  });
+
+  it("updates formulas when a sheet is renamed", () => {
+    const wb = twoSheets();
+    wb.renameSheet("s2", "Q1 sales");
+    expect(wb.getRaw("s1", 0, 0)).toBe("='Q1 sales'!B2*2");
+    expect(wb.getValue("s1", 0, 0)).toBe(42);
+    expect(() => wb.renameSheet("s2", "my DATA")).toThrow();
+  });
+
+  it("shows #REF! after a referenced sheet is removed", () => {
+    const wb = twoSheets();
+    wb.removeSheet("s2");
+    expect(displayValue(wb.getValue("s1", 0, 0))).toBe("#REF!");
+    expect(wb.sheets.map((s) => s.name)).toEqual(["Sheet1", "My data"]);
+  });
+
+  it("adds, duplicates and names sheets", () => {
+    const wb = Workbook.withSheet();
+    const id = wb.addSheet();
+    expect(wb.sheetName(id)).toBe("Sheet2");
+    wb.setCell(id, 0, 0, "5");
+    wb.setCell(id, 0, 1, "=A1*2");
+    const copy = wb.duplicateSheet(id);
+    expect(wb.sheetName(copy)).toBe("Sheet2 (copy)");
+    expect(wb.getValue(copy, 0, 1)).toBe(10);
+    expect(wb.sheets.map((s) => s.id)).toEqual(["s1", id, copy]);
+  });
+});
+
+describe("inserting and deleting rows and columns", () => {
+  it("moves cells and keeps formulas pointing at the same data", () => {
+    const { wb, show, raw } = sheetWith({ A1: "1", A2: "2", A3: "3", B1: "=SUM(A1:A3)", B2: "=A3" });
+    wb.insert("s1", "row", 1, 2); // two blank rows before row 2
+    expect(raw("A4")).toBe("2");
+    expect(raw("B1")).toBe("=SUM(A1:A5)");
+    expect(raw("B4")).toBe("=A5");
+    expect(show("B1")).toBe("6");
+  });
+
+  it("shrinks ranges and turns deleted references into #REF!", () => {
+    const { wb, show, raw } = sheetWith({ A1: "1", A2: "2", A3: "3", B1: "=SUM(A1:A3)", C1: "=A2" });
+    wb.remove("s1", "row", 1, 1);
+    expect(raw("B1")).toBe("=SUM(A1:A2)");
+    expect(show("B1")).toBe("4");
+    expect(raw("C1")).toBe("=#REF!");
+    expect(show("C1")).toBe("#REF!");
+  });
+
+  it("adjusts columns, anchored references and other sheets", () => {
+    const wb = Workbook.fromJSON({
+      sheets: [
+        { id: "s1", name: "Data", cells: { A1: "1", B1: "2", C1: "=$B$1+A1" } },
+        { id: "s2", name: "Report", cells: { A1: "=Data!B1", B1: "=B1" } },
+      ],
+    });
+    wb.insert("s1", "col", 1, 1);
+    expect(wb.getRaw("s1", 0, 3)).toBe("=$C$1+A1");
+    expect(wb.getRaw("s2", 0, 0)).toBe("=Data!C1");
+    expect(wb.getRaw("s2", 0, 1)).toBe("=B1"); // its own sheet didn't change
+    expect(wb.getValue("s2", 0, 0)).toBe(2);
+  });
+
+  it("moves formats and sizes with their rows", () => {
+    const { wb } = sheetWith({ A2: "x" });
+    wb.setFormat("s1", 1, 0, { bold: true });
+    wb.setRowHeight("s1", 1, 40);
+    wb.insert("s1", "row", 0, 1);
+    expect(wb.getFormat("s1", 2, 0)).toEqual({ bold: true });
+    expect(wb.rowHeights("s1").get(2)).toBe(40);
+  });
+});
+
+describe("patches and undo", () => {
+  it("returns inverse patches that restore the previous state", () => {
+    const { wb, raw } = sheetWith({ A1: "1" });
+    const undo = wb.apply([
+      { sheet: "s1", row: 0, col: 0, raw: "2", format: { bold: true } },
+      { sheet: "s1", row: 1, col: 0, raw: "=A1" },
+    ]);
+    expect(wb.getValue("s1", 1, 0)).toBe(2);
+    wb.apply(undo);
+    expect(raw("A1")).toBe("1");
+    expect(raw("A2")).toBe("");
+    expect(wb.getFormat("s1", 0, 0)).toBeUndefined();
+  });
+});
+
+describe("number formats", () => {
+  it("formats numbers, currency, percents and decimals", () => {
+    expect(formatValue(1234.5, { numFmt: "number" }, "en-US")).toBe("1,234.50");
+    expect(formatValue(1234.5, { numFmt: "currency", currency: "USD" }, "en-US")).toBe("$1,234.50");
+    expect(formatValue(0.256, { numFmt: "percent", decimals: 1 }, "en-US")).toBe("25.6%");
+    expect(formatValue(3.14159, { decimals: 2 }, "en-US")).toBe("3.14");
+    expect(formatValue(12345, { numFmt: "scientific" }, "en-US")).toBe("1.23E+4");
+    expect(formatValue("text", { numFmt: "currency" }, "en-US")).toBe("text");
+  });
+});
+
+describe("fill and sort", () => {
+  it("continues numeric series and repeats formulas", () => {
+    const { wb, raw } = sheetWith({ A1: "1", A2: "3", B1: "=A1*10" });
+    wb.apply(fillPatches(wb, "s1", { r0: 0, r1: 1, c0: 0, c1: 0 }, { r0: 0, r1: 4, c0: 0, c1: 0 }, "series"));
+    expect([raw("A3"), raw("A4"), raw("A5")]).toEqual(["5", "7", "9"]);
+    wb.apply(fillPatches(wb, "s1", { r0: 0, r1: 0, c0: 1, c1: 1 }, { r0: 0, r1: 2, c0: 1, c1: 1 }, "copy"));
+    expect(raw("B3")).toBe("=A3*10");
+    expect(wb.getValue("s1", 2, 1)).toBe(50);
+  });
+
+  it("sorts rows by a column, keeping blanks last", () => {
+    const { wb, raw } = sheetWith({ A1: "pear", B1: "3", A2: "", B2: "9", A3: "apple", B3: "1", A4: "10", B4: "4" });
+    wb.apply(sortPatches(wb, "s1", { r0: 0, r1: 3, c0: 0, c1: 1 }, 0, true));
+    expect([raw("A1"), raw("A2"), raw("A3"), raw("A4")]).toEqual(["10", "apple", "pear", ""]);
+    expect([raw("B1"), raw("B2"), raw("B3"), raw("B4")]).toEqual(["4", "1", "3", "9"]);
+    wb.apply(sortPatches(wb, "s1", { r0: 0, r1: 3, c0: 0, c1: 1 }, 1, false));
+    expect([raw("B1"), raw("B4")]).toEqual(["9", "1"]);
   });
 });
 
@@ -193,6 +341,31 @@ describe("shiftFormula", () => {
     expect(shifted).toBe("=#REF!+1");
     expect(calc(shifted)).toBe("#REF!");
   });
+
+  it("keeps sheet prefixes", () => {
+    expect(shiftFormula("=Sales!A1+'My data'!B2:C3", 1, 0)).toBe("=Sales!A2+'My data'!B3:C4");
+  });
+});
+
+describe("structure and rename rewriting", () => {
+  const own = (ctx: { sheet: string | undefined }) => ctx.sheet === undefined;
+
+  it("expands a range when rows are inserted inside it", () => {
+    expect(adjustForStructureChange("=SUM(A2:A5)", "row", 2, 3, own)).toBe("=SUM(A2:A8)");
+    expect(adjustForStructureChange("=SUM(A2:A5)", "row", 0, 1, own)).toBe("=SUM(A3:A6)");
+    expect(adjustForStructureChange("=SUM(A2:A5)", "row", 9, 1, own)).toBe("=SUM(A2:A5)");
+  });
+
+  it("drops a fully deleted range", () => {
+    const adjusted = adjustForStructureChange("=SUM(B1:C1)+1", "col", 1, -2, own);
+    expect(adjusted).toBe("=SUM(#REF!)+1");
+    expect(calc(adjusted)).toBe("#REF!");
+  });
+
+  it("renames quoted and bare sheet prefixes", () => {
+    expect(renameSheetInFormula("=sales!A1+Other!A1", "Sales", "Q1 Sales")).toBe("='Q1 Sales'!A1+Other!A1");
+    expect(renameSheetInFormula("='Q1 Sales'!A1", "q1 sales", "Sales")).toBe("=Sales!A1");
+  });
 });
 
 describe("TSV", () => {
@@ -200,5 +373,11 @@ describe("TSV", () => {
     const rows = [["a", "b\tc"], ['say "hi"', "line1\nline2"]];
     expect(parseTSV(toTSV(rows))).toEqual(rows);
     expect(parseTSV("1\t2\r\n3\t4\r\n")).toEqual([["1", "2"], ["3", "4"]]);
+  });
+
+  it("reads and writes CSV", () => {
+    const rows = [["name", "note"], ["Ada", "likes, commas"]];
+    expect(toCSV(rows)).toBe('name,note\nAda,"likes, commas"');
+    expect(parseCSV("﻿" + toCSV(rows))).toEqual(rows);
   });
 });

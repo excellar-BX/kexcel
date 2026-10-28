@@ -3,7 +3,8 @@ import { FUNCTIONS } from "./functions";
 import type { Node } from "./parser";
 import { CellError, isError, type Scalar, type Value } from "./types";
 
-export type CellReader = (row: number, col: number) => Scalar;
+/** Reads a computed cell value; `sheet` is a sheet name, or undefined for the formula's own sheet. */
+export type CellReader = (row: number, col: number, sheet?: string) => Scalar;
 
 function evaluateNode(node: Node, read: CellReader): Value {
   switch (node.type) {
@@ -12,12 +13,12 @@ function evaluateNode(node: Node, read: CellReader): Value {
     case "boolean":
       return node.value;
     case "ref":
-      return read(node.addr.row, node.addr.col);
+      return read(node.addr.row, node.addr.col, node.sheet);
     case "range": {
       const rows: Scalar[][] = [];
       for (let r = node.start.row; r <= node.end.row; r++) {
         const row: Scalar[] = [];
-        for (let c = node.start.col; c <= node.end.col; c++) row.push(read(r, c));
+        for (let c = node.start.col; c <= node.end.col; c++) row.push(read(r, c, node.sheet));
         rows.push(row);
       }
       return rows;

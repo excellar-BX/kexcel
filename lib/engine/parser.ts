@@ -7,8 +7,9 @@ export type Node =
   | { type: "number"; value: number }
   | { type: "string"; value: string }
   | { type: "boolean"; value: boolean }
-  | { type: "ref"; addr: CellAddress }
-  | { type: "range"; start: CellAddress; end: CellAddress }
+  /** `sheet` is the sheet name written in the formula; absent means the formula's own sheet. */
+  | { type: "ref"; addr: CellAddress; sheet?: string }
+  | { type: "range"; start: CellAddress; end: CellAddress; sheet?: string }
   | { type: "name"; name: string }
   | { type: "refError" }
   | { type: "unary"; op: "-" | "+"; arg: Node }
@@ -83,20 +84,13 @@ export function parseFormula(src: string): Node {
         expect("rparen");
         return inner;
       }
-      case "ref": {
-        const start = { row: t.row, col: t.col };
-        if (peek()?.type === "colon") {
-          pos++;
-          const endTok = expect("ref") as Extract<Token, { type: "ref" }>;
-          const end = { row: endTok.row, col: endTok.col };
-          return {
-            type: "range",
-            start: { row: Math.min(start.row, end.row), col: Math.min(start.col, end.col) },
-            end: { row: Math.max(start.row, end.row), col: Math.max(start.col, end.col) },
-          };
-        }
-        return { type: "ref", addr: start };
+      case "sheet": {
+        const ref = next();
+        if (ref.type !== "ref") throw new FormulaSyntaxError("Expected a cell after the sheet name");
+        return parseReference(ref, t.name);
       }
+      case "ref":
+        return parseReference(t);
       case "ident": {
         if (peek()?.type === "lparen") {
           pos++;
@@ -124,20 +118,38 @@ export function parseFormula(src: string): Node {
     }
   }
 
+  function parseReference(t: Extract<Token, { type: "ref" }>, sheet?: string): Node {
+    const start = { row: t.row, col: t.col };
+    if (peek()?.type !== "colon") return { type: "ref", addr: start, sheet };
+    pos++;
+    const endTok = expect("ref") as Extract<Token, { type: "ref" }>;
+    const end = { row: endTok.row, col: endTok.col };
+    return {
+      type: "range",
+      start: { row: Math.min(start.row, end.row), col: Math.min(start.col, end.col) },
+      end: { row: Math.max(start.row, end.row), col: Math.max(start.col, end.col) },
+      sheet,
+    };
+  }
+
   const ast = parseExpression(0);
   if (pos < tokens.length) throw new FormulaSyntaxError("Unexpected token after expression");
   return ast;
 }
 
+export interface Reference extends CellAddress {
+  sheet?: string;
+}
+
 /** Collects every cell the formula reads, expanding ranges cell by cell. */
-export function collectReferences(node: Node, out: CellAddress[] = []): CellAddress[] {
+export function collectReferences(node: Node, out: Reference[] = []): Reference[] {
   switch (node.type) {
     case "ref":
-      out.push(node.addr);
+      out.push({ ...node.addr, sheet: node.sheet });
       break;
     case "range":
       for (let r = node.start.row; r <= node.end.row; r++) {
-        for (let c = node.start.col; c <= node.end.col; c++) out.push({ row: r, col: c });
+        for (let c = node.start.col; c <= node.end.col; c++) out.push({ row: r, col: c, sheet: node.sheet });
       }
       break;
     case "unary":

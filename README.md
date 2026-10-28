@@ -12,33 +12,43 @@ npm test        # formula engine tests
 
 ## What works today
 
-- Grid of 10,000 rows × 52 columns that renders only the visible cells
-- Formula bar, multi-cell selection, column resizing
-- Keyboard navigation: arrows, Ctrl+arrows, Tab, Enter, F2, Home, Page Up/Down
-- Copy, cut and paste, including to and from Excel and Google Sheets; pasted formulas shift their references
-- Undo and redo
-- About 40 functions: SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTIF, SUMIF, AVERAGEIF, IF, IFERROR, AND, OR, NOT, VLOOKUP, INDEX, MATCH, ROUND, ROUNDUP, ROUNDDOWN, MOD, LEN, LEFT, RIGHT, MID, CONCAT, TRIM and more
-- Recalculation of only the affected cells, with circular reference detection (`#CYCLE!`)
-- Sheets saved automatically in the browser's localStorage
+- Menu bar (File, Edit, View, Insert, Format, Data, Help) and a formatting toolbar
+- Multiple sheet tabs: add, rename, duplicate, reorder, delete; formulas across tabs (`=Sales!B2`, `='My data'!A1:A9`)
+- Formatting: bold, italic, underline, strikethrough, font, size, text and fill colour, borders, alignment
+- Number formats: number, percent, scientific, currency (10 currencies), more/fewer decimals
+- Insert and delete rows and columns; formulas on every tab adjust like in Excel
+- Fill handle (drag to continue 1, 2, 3…), Ctrl+D / Ctrl+R fill, sort A→Z / Z→A
+- Find (Ctrl+F), name box to jump to a cell, zoom, gridlines toggle, right-click menus
+- Copy, cut and paste with formulas and formats, also to and from Excel and Google Sheets
+- Undo and redo for edits, formatting, structure and tab changes
+- CSV import (into a new tab) and export
+- Grid of 10,000 rows × 52 columns that renders only the visible cells; resizable rows and columns, double-click to fit
+- About 40 functions with recalculation of only the affected cells and circular reference detection
+- Spreadsheets saved automatically in the browser
 
 ## Project layout
 
 ```
 app/                    Next.js routes: home page and /sheet/[id] editor
-components/grid/        Spreadsheet UI (grid, formula bar, status bar)
+components/grid/        Editor: state and commands (Spreadsheet), rendering (Grid), layout, find
+components/toolbar/     Menu bar, formatting toolbar, sheet tabs, shortcuts dialog
+components/ui/          Menus, popovers and icons
 lib/engine/             Formula engine in plain TypeScript, no React
   tokenizer.ts          Formula text -> tokens
   parser.ts             Tokens -> syntax tree
   evaluate.ts           Syntax tree -> value
   functions.ts          Built-in functions
-  sheet.ts              Cell storage, dependency graph, recalculation
+  workbook.ts           Sheets, cells, formats, dependency graph, recalculation
+  references.ts         Rewrites references for paste, insert/delete, rename
+  format.ts             Cell formats and number display
+lib/sheet-ops.ts        Fill and sort
 lib/storage.ts          localStorage persistence
-lib/tsv.ts              Clipboard format
+lib/tsv.ts              Clipboard (TSV) and CSV
 ```
 
 ## Roadmap
 
-1. Formatting (bold, colours, number and currency formats), multiple tabs, `.xlsx` and `.csv` import and export
+1. `.xlsx` import and export, freeze rows and columns, merge cells, wrap text, dates
 2. AI: write formulas from plain English, explain formulas, find errors, ask questions of a sheet
 3. Accounts, cloud save, sharing, charts, mobile polish
 4. Templates for small businesses

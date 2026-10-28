@@ -1,14 +1,15 @@
 // Sheets are kept in this browser's localStorage until accounts and cloud sync exist.
 // Every access is wrapped because storage can be unavailable (private mode, quota, blocked).
 
+import type { WorkbookJSON } from "@/lib/engine";
+
 const PREFIX = "kexcel:sheet:";
 
 export interface SavedSheet {
   title: string;
-  /** Raw input keyed by cell name, e.g. { A1: "=SUM(B1:B3)" }. */
-  cells: Record<string, string>;
-  /** Custom widths keyed by column index. */
-  colWidths: Record<string, number>;
+  workbook: WorkbookJSON;
+  /** The tab that was open last. */
+  activeSheet?: string;
   updatedAt: number;
 }
 
@@ -18,15 +19,26 @@ export interface SheetSummary {
   updatedAt: number;
 }
 
+/** The first saved format held one sheet's cells and widths at the top level. */
+interface LegacySheet {
+  title?: string;
+  cells?: Record<string, string>;
+  colWidths?: Record<string, number>;
+  updatedAt?: number;
+}
+
 export function loadSheet(id: string): SavedSheet | null {
   try {
     const text = localStorage.getItem(PREFIX + id);
     if (!text) return null;
-    const data = JSON.parse(text) as Partial<SavedSheet>;
+    const data = JSON.parse(text) as Partial<SavedSheet> & LegacySheet;
+    const workbook: WorkbookJSON = data.workbook ?? {
+      sheets: [{ id: "s1", name: "Sheet1", cells: data.cells ?? {}, colWidths: data.colWidths ?? {} }],
+    };
     return {
       title: data.title ?? "Untitled sheet",
-      cells: data.cells ?? {},
-      colWidths: data.colWidths ?? {},
+      workbook,
+      activeSheet: data.activeSheet,
       updatedAt: data.updatedAt ?? 0,
     };
   } catch {
@@ -34,7 +46,7 @@ export function loadSheet(id: string): SavedSheet | null {
   }
 }
 
-/** Returns false when the browser refused the write. */
+/** Returns false when the browser refused the write, e.g. because storage is full. */
 export function saveSheet(id: string, data: Omit<SavedSheet, "updatedAt">): boolean {
   try {
     localStorage.setItem(PREFIX + id, JSON.stringify({ ...data, updatedAt: Date.now() }));
