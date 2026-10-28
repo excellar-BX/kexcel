@@ -1,3 +1,4 @@
+import type { AITab } from "@/components/ai/AIPanel";
 import type { BorderMode } from "@/components/ui/icons";
 import type { CellAddress, CellFormat, NumberFormat, SheetInfo } from "@/lib/engine";
 
@@ -78,4 +79,5 @@ export interface Commands {
   setZoom(zoom: number): void;
   toggleGridlines(): void;
   showShortcuts(): void;
+  openAI(tab: AITab): void;
 }

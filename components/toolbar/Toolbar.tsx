@@ -317,6 +317,11 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
         label={<span className="text-[16px]">Σ</span>}
         items={QUICK_FUNCTIONS.map((fn) => ({ label: fn, onSelect: () => c.insertFunction(fn) }))}
       />
+      <Divider />
+      <Button label="AI assistant: write, explain and check formulas" onClick={() => c.openAI("formula")} wide>
+        <span>✨</span>
+        <span className="font-medium">AI</span>
+      </Button>
     </div>
   );
 }

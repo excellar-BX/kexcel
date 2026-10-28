@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import AIPanel, { type AITab } from "@/components/ai/AIPanel";
 import PrintDialog, { loadOptions, type PrintScope } from "@/components/print/PrintDialog";
 import PrintView, { type PrintJob, type PrintOptions } from "@/components/print/PrintView";
 import MenuBar from "@/components/toolbar/MenuBar";
@@ -98,6 +99,7 @@ function Spreadsheet({ docId }: { docId: string }) {
   const [nameBox, setNameBox] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+  const [aiTab, setAiTab] = useState<AITab | null>(null);
 
   const dirtyRef = useRef(false);
   const historyRef = useRef<{ undo: HistoryEntry[]; redo: HistoryEntry[] }>({ undo: [], redo: [] });
@@ -782,6 +784,24 @@ function Spreadsheet({ docId }: { docId: string }) {
       focusGrid();
     },
     showShortcuts: () => setShortcutsOpen(true),
+    openAI: (tab) => {
+      if (editing) commitEdit();
+      setAiTab(tab);
+    },
+  };
+
+  /** Selects a reference written like "B4", "C2:C9" or "'My data'!A1", switching tabs if needed. */
+  const goToReference = (ref: string) => {
+    const bang = ref.lastIndexOf("!");
+    const sheetPart = bang >= 0 ? ref.slice(0, bang).replace(/^'|'$/g, "").replace(/''/g, "'") : null;
+    const [a, b] = (bang >= 0 ? ref.slice(bang + 1) : ref).trim().toUpperCase().split(":");
+    const start = nameToAddress(a ?? "");
+    const end = b ? nameToAddress(b) : start;
+    if (!start || !end) return;
+    const target = sheetPart ? wb.sheets.find((s) => s.name.toLowerCase() === sheetPart.toLowerCase())?.id : activeSheet;
+    if (!target) return;
+    if (target !== activeSheet) setActiveSheet(target);
+    select({ anchor: clampAddr(start), focus: clampAddr(end) });
   };
 
   // ---- Keyboard ---------------------------------------------------------------
@@ -1017,8 +1037,9 @@ function Spreadsheet({ docId }: { docId: string }) {
         />
       </div>
 
-      {/* Grid */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Grid, with the AI panel beside it */}
+      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <Grid
           wb={wb}
           sheet={activeSheet}
@@ -1069,6 +1090,27 @@ function Spreadsheet({ docId }: { docId: string }) {
             }}
           />
         )}
+      </div>
+      {aiTab && (
+        <AIPanel
+          wb={wb}
+          sheet={activeSheet}
+          version={version}
+          selection={range}
+          active={active}
+          tab={aiTab}
+          onTab={setAiTab}
+          onClose={() => {
+            setAiTab(null);
+            focusGrid();
+          }}
+          onInsert={(cell, raw) => {
+            commitPatches([{ sheet: activeSheet, row: cell.row, col: cell.col, raw }]);
+            select({ anchor: cell, focus: cell });
+          }}
+          onGoTo={goToReference}
+        />
+      )}
       </div>
 
       {/* Tabs and status */}

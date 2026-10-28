@@ -143,6 +143,15 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
       ],
     },
     {
+      label: "AI",
+      items: [
+        { label: "Write a formula", onSelect: () => c.openAI("formula") },
+        { label: "Explain this formula", onSelect: () => c.openAI("explain") },
+        { label: "Ask about this tab", onSelect: () => c.openAI("ask") },
+        { label: "Check for problems", onSelect: () => c.openAI("check") },
+      ],
+    },
+    {
       label: "Help",
       items: [{ label: "Keyboard shortcuts", shortcut: `${mod}/`, onSelect: c.showShortcuts }],
     },
