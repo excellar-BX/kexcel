@@ -7,6 +7,7 @@ import {
   toScalar,
   toText,
 } from "./coerce";
+import { dateToSerial, daysInMonth, nowSerial, parseDateText, serialToParts, timeToSerial, type DateParts } from "./dates";
 import { CellError, isError, isMatrix, type Matrix, type Scalar, type Value } from "./types";
 
 export type FormulaFunction = (args: Value[]) => Value;
@@ -319,4 +320,138 @@ export const FUNCTIONS: Record<string, FormulaFunction> = {
     arity("ISERROR", args, 1);
     return isError(toScalar(args[0]));
   },
+
+  // ---- Dates and times (serial day numbers, see dates.ts) ----
+  TODAY: (args) => {
+    arity("TODAY", args, 0);
+    return nowSerial(false);
+  },
+  NOW: (args) => {
+    arity("NOW", args, 0);
+    return nowSerial(true);
+  },
+  DATE: (args) => {
+    arity("DATE", args, 3);
+    let y = Math.trunc(toNumber(args[0]));
+    // Like Excel, years 0-1899 count from 1900.
+    if (y >= 0 && y < 1900) y += 1900;
+    const serial = dateToSerial(y, Math.trunc(toNumber(args[1])), Math.trunc(toNumber(args[2])));
+    if (serial < 1) throw new CellError("#NUM!", "Dates before 1900 aren't supported");
+    return serial;
+  },
+  TIME: (args) => {
+    arity("TIME", args, 3);
+    const t = timeToSerial(toNumber(args[0]), toNumber(args[1]), toNumber(args[2]));
+    if (t < 0) throw new CellError("#NUM!", "Time can't be negative");
+    return t - Math.floor(t);
+  },
+  DATEVALUE: (args) => {
+    arity("DATEVALUE", args, 1);
+    const parsed = parseDateText(toText(args[0]));
+    if (!parsed || parsed.kind === "time") throw new CellError("#VALUE!", "That text isn't a date");
+    return Math.floor(parsed.serial);
+  },
+  YEAR: datePart("YEAR", (p) => p.year),
+  MONTH: datePart("MONTH", (p) => p.month),
+  DAY: datePart("DAY", (p) => p.day),
+  HOUR: datePart("HOUR", (p) => p.hour),
+  MINUTE: datePart("MINUTE", (p) => p.minute),
+  SECOND: datePart("SECOND", (p) => p.second),
+  WEEKDAY: (args) => {
+    arity("WEEKDAY", args, 1, 2);
+    const day = serialToParts(toDate(args[0])).weekday; // 0 = Sunday
+    const type = args[1] === undefined ? 1 : toNumber(args[1]);
+    if (type === 1) return day + 1;
+    if (type === 2) return ((day + 6) % 7) + 1;
+    if (type === 3) return (day + 6) % 7;
+    throw new CellError("#NUM!", "WEEKDAY type must be 1, 2 or 3");
+  },
+  DAYS: (args) => {
+    arity("DAYS", args, 2);
+    return Math.floor(toDate(args[0])) - Math.floor(toDate(args[1]));
+  },
+  EDATE: (args) => {
+    arity("EDATE", args, 2);
+    return addMonths(toDate(args[0]), Math.trunc(toNumber(args[1])), false);
+  },
+  EOMONTH: (args) => {
+    arity("EOMONTH", args, 2);
+    return addMonths(toDate(args[0]), Math.trunc(toNumber(args[1])), true);
+  },
+  DATEDIF: (args) => {
+    arity("DATEDIF", args, 3);
+    const start = Math.floor(toDate(args[0]));
+    const end = Math.floor(toDate(args[1]));
+    if (end < start) throw new CellError("#NUM!", "The end date is before the start date");
+    const a = serialToParts(start);
+    const b = serialToParts(end);
+    let months = (b.year - a.year) * 12 + (b.month - a.month);
+    if (b.day < a.day) months--;
+    switch (toText(args[2]).toUpperCase()) {
+      case "D":
+        return end - start;
+      case "M":
+        return months;
+      case "Y":
+        return Math.floor(months / 12);
+      case "YM":
+        return months % 12;
+      case "MD": {
+        const anchor = addMonths(start, months, false);
+        return end - anchor;
+      }
+      case "YD": {
+        const years = Math.floor(months / 12);
+        return end - addMonths(start, years * 12, false);
+      }
+      default:
+        throw new CellError("#NUM!", 'DATEDIF unit must be "Y", "M", "D", "YM", "MD" or "YD"');
+    }
+  },
+  NETWORKDAYS: (args) => {
+    arity("NETWORKDAYS", args, 2);
+    let start = Math.floor(toDate(args[0]));
+    let end = Math.floor(toDate(args[1]));
+    const sign = end < start ? -1 : 1;
+    if (sign < 0) [start, end] = [end, start];
+    if (end - start > 100_000) throw new CellError("#NUM!", "Date range is too long");
+    let count = 0;
+    for (let d = start; d <= end; d++) {
+      const w = serialToParts(d).weekday;
+      if (w !== 0 && w !== 6) count++;
+    }
+    return sign * count;
+  },
 };
+
+/** A date argument: a serial number, or text such as "2025-01-15". */
+function toDate(v: Value): number {
+  const s = toScalar(v);
+  if (typeof s === "string") {
+    const parsed = parseDateText(s);
+    if (parsed) return parsed.serial;
+  }
+  return toNumber(s);
+}
+
+function datePart(name: string, pick: (p: DateParts) => number): FormulaFunction {
+  return (args) => {
+    arity(name, args, 1);
+    const serial = toDate(args[0]);
+    if (serial < 0) throw new CellError("#NUM!", "Dates can't be negative");
+    return pick(serialToParts(serial));
+  };
+}
+
+/** Moves a date by whole months, keeping the day where it exists; `endOfMonth` snaps to the last day. */
+function addMonths(serial: number, months: number, endOfMonth: boolean): number {
+  const p = serialToParts(Math.floor(serial));
+  const total = p.year * 12 + (p.month - 1) + months;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  const last = daysInMonth(year, month);
+  return dateToSerial(year, month, endOfMonth ? last : Math.min(p.day, last));
+}
+
+/** Functions whose result changes over time, so their cells recalculate on every change. */
+export const VOLATILE_FUNCTIONS = new Set(["TODAY", "NOW"]);

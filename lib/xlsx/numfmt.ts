@@ -53,6 +53,16 @@ function bare(code: string) {
     .replace(/[_*]./g, "");
 }
 
+/** Which kind of date format a code is: a time of day, a date, or both. */
+export function dateKindOf(id: number, code: string | undefined): "date" | "time" | "datetime" {
+  if (id >= 18 && id <= 21) return "time";
+  if (id === 22) return "datetime";
+  const section = bare(code?.split(";")[0] ?? "");
+  const hasDate = /[dy]/i.test(section) || (/m/i.test(section) && !/[hs]/i.test(section));
+  const hasTime = /[hs]/i.test(section);
+  return hasDate && hasTime ? "datetime" : hasTime ? "time" : "date";
+}
+
 export function isDateFormat(id: number, code: string | undefined): boolean {
   if (DATE_IDS.has(id)) return true;
   if (!code) return false;
@@ -96,6 +106,13 @@ function currencySymbol(currency: string) {
 export function codeFromFormat(f: CellFormat): string | null {
   const zeros = (n: number) => (n > 0 ? "." + "0".repeat(n) : "");
   switch (f.numFmt) {
+    case "date":
+    case "datetime": {
+      const date = f.dateStyle === "full" ? "dddd, d mmmm yyyy" : f.dateStyle === "medium" ? "d mmm yyyy" : "yyyy-mm-dd";
+      return f.numFmt === "datetime" ? `${date} hh:mm` : date;
+    }
+    case "time":
+      return "hh:mm";
     case "number":
       return "#,##0" + zeros(f.decimals ?? 2);
     case "percent":

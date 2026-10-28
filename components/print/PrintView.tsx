@@ -87,8 +87,12 @@ function SheetTable({
           <tr key={r} style={{ height: layout.rowHeight(r) }}>
             {options.headers && <th className={headerCell}>{r + 1}</th>}
             {cols.map((c) => {
-              const value = wb.getValue(sheet, r, c);
-              const f = wb.getFormat(sheet, r, c);
+              // A merged range prints as one cell spanning its rows and columns (within the printed area).
+              const merge = wb.mergeAt(sheet, r, c);
+              const topLeft = merge && { row: Math.max(merge.r0, range.r0), col: Math.max(merge.c0, range.c0) };
+              if (topLeft && (topLeft.row !== r || topLeft.col !== c)) return null;
+              const value = merge ? wb.getValue(sheet, merge.r0, merge.c0) : wb.getValue(sheet, r, c);
+              const f = merge ? wb.getFormat(sheet, merge.r0, merge.c0) : wb.getFormat(sheet, r, c);
               const b = f?.borders;
               const line = "1px solid #000";
               const align =
@@ -96,7 +100,9 @@ function SheetTable({
               return (
                 <td
                   key={c}
-                  className="overflow-hidden whitespace-nowrap px-1"
+                  rowSpan={merge ? Math.min(merge.r1, range.r1) - r + 1 : undefined}
+                  colSpan={merge ? Math.min(merge.c1, range.c1) - c + 1 : undefined}
+                  className={`overflow-hidden px-1 ${f?.wrap ? "whitespace-pre-wrap break-words" : "whitespace-nowrap"}`}
                   style={{
                     ...textStyle(f, 1),
                     color: isError(value) ? "#c62828" : (f?.color ?? "#000"),

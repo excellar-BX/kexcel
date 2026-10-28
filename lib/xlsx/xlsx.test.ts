@@ -55,6 +55,7 @@ describe("xlsx round trip", () => {
           colWidths: { 0: 160 },
           rowHeights: { 3: 40 },
           freeze: { rows: 1, cols: 1 },
+          merges: ["D1:E2"],
         },
         { id: "s2", name: "My data", cells: { A1: "=Sales!B4*2" } },
       ],
@@ -83,6 +84,33 @@ describe("xlsx round trip", () => {
     expect(back.colWidths(sales.id).get(0)).toBe(160);
     expect(back.rowHeights(sales.id).get(3)).toBe(40);
     expect(back.getFreeze(sales.id)).toEqual({ rows: 1, cols: 1 });
+    expect(back.merges(sales.id)).toEqual([{ r0: 0, c0: 3, r1: 1, c1: 4 }]);
+  });
+
+  it("keeps dates, times and wrapped text", () => {
+    const wb = Workbook.fromJSON({
+      sheets: [
+        {
+          id: "s1",
+          name: "S",
+          cells: { A1: "2025-01-15", A2: "14:30", A3: "2025-01-15 09:05", A4: "Long text" },
+          formats: {
+            A1: { numFmt: "date", dateStyle: "medium" },
+            A2: { numFmt: "time" },
+            A3: { numFmt: "datetime" },
+            A4: { wrap: true },
+          },
+        },
+      ],
+    });
+    const back = Workbook.fromJSON(readXlsx(writeXlsx(wb), LIMITS).workbook);
+    expect(back.getValue("s1", 0, 0)).toBe(45672);
+    expect(back.getFormat("s1", 0, 0)).toEqual({ numFmt: "date" });
+    expect(back.getRaw("s1", 1, 0)).toBe("14:30");
+    expect(back.getFormat("s1", 1, 0)).toEqual({ numFmt: "time" });
+    expect(back.getRaw("s1", 2, 0)).toBe("2025-01-15 09:05");
+    expect(back.getFormat("s1", 2, 0)).toEqual({ numFmt: "datetime" });
+    expect(back.getFormat("s1", 3, 0)).toEqual({ wrap: true });
   });
 
   it("writes cached results and a recalculation flag for Excel", () => {
@@ -147,6 +175,9 @@ describe("reading files written by Excel", () => {
     expect(wb.getRaw(id, 2, 2)).toBe("=B3*2");
     expect(wb.getValue(id, 2, 2)).toBe(4);
     expect(wb.getRaw(id, 1, 3)).toBe("2025-01-01");
+    expect(wb.getValue(id, 1, 3)).toBe(45658);
+    expect(wb.getFormat(id, 1, 3)).toEqual({ numFmt: "date" });
+    expect(wb.merges(id)).toEqual([{ r0: 0, c0: 4, r1: 0, c1: 5 }]);
     expect(wb.getRaw(id, 2, 3)).toBe("=CONCAT(A2,A3)");
     expect(wb.getValue(id, 2, 3)).toBe("PenInk");
     expect(wb.getFormat(id, 0, 0)).toEqual({ bold: true, color: "#1f4e79", fill: "#ffff00" });
@@ -154,7 +185,7 @@ describe("reading files written by Excel", () => {
     expect(wb.colWidths(id).get(0)).toBe(150);
     expect(wb.rowHeights(id).get(2)).toBe(40);
     expect(wb.getFreeze(id)).toEqual({ rows: 1, cols: 0 });
-    expect(notes).toEqual(["1 merged cell range was unmerged; Kexcel doesn't merge cells yet."]);
+    expect(notes).toEqual([]);
   });
 
   it("explains files that aren't workbooks", () => {

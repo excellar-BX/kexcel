@@ -17,6 +17,7 @@ import {
   DEFAULT_FONT_SIZE,
   displayValue,
   formatValue,
+  impliedDateKind,
   mergeFormat,
   nameToAddress,
   parseKey,
@@ -26,6 +27,7 @@ import {
   type CellAddress,
   type CellFormat,
   type CellPatch,
+  type CellRange,
   type WorkbookJSON,
 } from "@/lib/engine";
 import { fillPatches, sortPatches, type Range } from "@/lib/sheet-ops";
@@ -175,9 +177,52 @@ function Spreadsheet({ docId }: { docId: string }) {
     }
   };
 
+  const overlaps = (a: CellRange, b: CellRange) => a.r0 <= b.r1 && a.r1 >= b.r0 && a.c0 <= b.c1 && a.c1 >= b.c0;
+
+  /**
+   * Grows a selection so it never cuts through a merged range; a click inside
+   * one selects all of it, with its top-left cell active.
+   */
+  const snapToMerges = (s: Selection): Selection => {
+    const merges = wb.merges(activeSheet);
+    if (merges.length === 0) return s;
+    const own = wb.mergeAt(activeSheet, s.anchor.row, s.anchor.col);
+    const anchor = own ? { row: own.r0, col: own.c0 } : s.anchor;
+    let r = rangeOf({ anchor, focus: s.focus });
+    if (own) r = { r0: Math.min(r.r0, own.r0), r1: Math.max(r.r1, own.r1), c0: Math.min(r.c0, own.c0), c1: Math.max(r.c1, own.c1) };
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const m of merges) {
+        if (overlaps(m, r) && (m.r0 < r.r0 || m.r1 > r.r1 || m.c0 < r.c0 || m.c1 > r.c1)) {
+          r = { r0: Math.min(r.r0, m.r0), r1: Math.max(r.r1, m.r1), c0: Math.min(r.c0, m.c0), c1: Math.max(r.c1, m.c1) };
+          grew = true;
+        }
+      }
+    }
+    return { anchor, focus: { row: anchor.row === r.r0 ? r.r1 : r.r0, col: anchor.col === r.c0 ? r.c1 : r.c0 } };
+  };
+
   const select = (next: Selection, scroll = true) => {
-    setSel(next);
-    if (scroll) ensureVisible(next.focus);
+    const snapped = snapToMerges(next);
+    setSel(snapped);
+    if (scroll) ensureVisible(snapped.focus);
+  };
+
+  /** The cell one step away, stepping over the far edge of a merged range. */
+  const stepFrom = (from: CellAddress, dr: number, dc: number): CellAddress => {
+    const m = wb.mergeAt(activeSheet, from.row, from.col);
+    const row = m ? (dr > 0 ? m.r1 : dr < 0 ? m.r0 : from.row) : from.row;
+    const col = m ? (dc > 0 ? m.c1 : dc < 0 ? m.c0 : from.col) : from.col;
+    return clampAddr({ row: row + dr, col: col + dc });
+  };
+
+  /** Typed dates and date formulas get a date format when the cell has no number format yet. */
+  const withImpliedFormat = (patch: CellPatch): CellPatch => {
+    if (patch.raw === undefined) return patch;
+    const kind = impliedDateKind(patch.raw);
+    const current = patch.format === undefined ? wb.getFormat(patch.sheet, patch.row, patch.col) : (patch.format ?? undefined);
+    if (!kind || current?.numFmt) return patch;
+    return { ...patch, format: mergeFormat(current, { numFmt: kind }) };
   };
 
   const selectRange = (r: Range) => select({ anchor: { row: r.r0, col: r.c0 }, focus: { row: r.r1, col: r.c1 } });
@@ -297,10 +342,10 @@ function Spreadsheet({ docId }: { docId: string }) {
 
   const commitEdit = (move?: [number, number]) => {
     if (!editing) return;
-    commitPatches([{ sheet: activeSheet, row: editing.row, col: editing.col, raw: editing.value }]);
+    commitPatches([withImpliedFormat({ sheet: activeSheet, row: editing.row, col: editing.col, raw: editing.value })]);
     setEditing(null);
     if (move) {
-      const next = clampAddr({ row: editing.row + move[0], col: editing.col + move[1] });
+      const next = stepFrom({ row: editing.row, col: editing.col }, move[0], move[1]);
       select({ anchor: next, focus: next });
     }
     focusGrid();
@@ -311,9 +356,16 @@ function Spreadsheet({ docId }: { docId: string }) {
     focusGrid();
   };
 
-  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (!editing) return;
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && e.altKey) {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const at = el.selectionStart ?? editing.value.length;
+      const value = editing.value.slice(0, at) + "\n" + editing.value.slice(el.selectionEnd ?? at);
+      setEditing({ ...editing, value, mode: "edit" });
+      requestAnimationFrame(() => el.setSelectionRange(at + 1, at + 1));
+    } else if (e.key === "Enter") {
       e.preventDefault();
       commitEdit([e.shiftKey ? -1 : 1, 0]);
     } else if (e.key === "Tab") {
@@ -328,7 +380,7 @@ function Spreadsheet({ docId }: { docId: string }) {
     }
   };
 
-  const placeCaretAtEnd = (e: React.FocusEvent<HTMLInputElement>) => {
+  const placeCaretAtEnd = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const len = e.target.value.length;
     e.target.setSelectionRange(len, len);
   };
@@ -398,7 +450,7 @@ function Spreadsheet({ docId }: { docId: string }) {
           patch.raw = raw;
           patch.format = internal.formats[si]?.[sj] ?? null;
         }
-        patches.push(patch);
+        patches.push(internal ? patch : withImpliedFormat(patch));
       }
     }
     commitPatches(patches);
@@ -626,6 +678,11 @@ function Spreadsheet({ docId }: { docId: string }) {
     const used = wb.usedBounds(activeSheet);
     if (!used) return;
     const multi = range.r1 > range.r0 || range.c1 > range.c0;
+    const sortArea: CellRange = multi ? range : { r0: 0, r1: used.rows - 1, c0: 0, c1: used.cols - 1 };
+    if (wb.merges(activeSheet).some((m) => overlaps(m, sortArea))) {
+      setToast("Unmerge the cells in this range before sorting it.");
+      return;
+    }
     // A single cell sorts every row of data by its column.
     const r = multi ? formatTarget(range) : { r0: 0, r1: used.rows - 1, c0: 0, c1: used.cols - 1 };
     const target = { ...r, r1: Math.min(r.r1, used.rows - 1) };
@@ -704,6 +761,35 @@ function Spreadsheet({ docId }: { docId: string }) {
     },
     setBorders: (mode) => {
       setBorders(mode);
+      focusGrid();
+    },
+    mergeCells: () => {
+      const r = range;
+      if (r.r0 === r.r1 && r.c0 === r.c1) {
+        setToast("Select two or more cells to merge.");
+        return;
+      }
+      if ((r.r1 - r.r0 + 1) * (r.c1 - r.c0 + 1) > 5000) {
+        setToast("That's too many cells to merge at once.");
+        return;
+      }
+      const lost = filledIn(r).filter((a) => a.row !== r.r0 || a.col !== r.c0);
+      const topLeft = addressToName({ row: r.r0, col: r.c0 });
+      if (
+        lost.length &&
+        !confirm(`Merging keeps only the value in ${topLeft}. Clear the other ${lost.length} filled cell${lost.length === 1 ? "" : "s"}?`)
+      ) {
+        return;
+      }
+      structural(() => {
+        if (lost.length) wb.setCells(activeSheet, lost.map((a) => ({ ...a, raw: "" })));
+        wb.setMerges(activeSheet, [...wb.merges(activeSheet).filter((m) => !overlaps(m, r)), r]);
+      });
+      setSel({ anchor: { row: r.r0, col: r.c0 }, focus: { row: r.r1, col: r.c1 } });
+      focusGrid();
+    },
+    unmergeCells: () => {
+      structural(() => wb.setMerges(activeSheet, wb.merges(activeSheet).filter((m) => !overlaps(m, range))));
       focusGrid();
     },
 
@@ -914,7 +1000,7 @@ function Spreadsheet({ docId }: { docId: string }) {
       e.preventDefault();
       const [dr, dc] = ARROWS[e.key];
       const from = e.shiftKey ? sel.focus : sel.anchor;
-      move(ctrl ? jump(from, dr, dc) : { row: from.row + dr, col: from.col + dc }, e.shiftKey);
+      move(ctrl ? jump(from, dr, dc) : e.shiftKey ? { row: from.row + dr, col: from.col + dc } : stepFrom(from, dr, dc), e.shiftKey);
       return;
     }
 
@@ -923,7 +1009,7 @@ function Spreadsheet({ docId }: { docId: string }) {
     switch (e.key) {
       case "Tab":
         e.preventDefault();
-        move({ row: active.row, col: active.col + (e.shiftKey ? -1 : 1) }, false);
+        move(stepFrom(active, 0, e.shiftKey ? -1 : 1), false);
         return;
       case "Home":
         e.preventDefault();
@@ -991,6 +1077,7 @@ function Spreadsheet({ docId }: { docId: string }) {
     currency,
     freeze: wb.getFreeze(activeSheet),
     activeCell: active,
+    merged: wb.merges(activeSheet).some((m) => overlaps(m, range)),
   };
 
   return (
@@ -1149,7 +1236,7 @@ function Spreadsheet({ docId }: { docId: string }) {
             focusGrid();
           }}
           onInsert={(cell, raw) => {
-            commitPatches([{ sheet: activeSheet, row: cell.row, col: cell.col, raw }]);
+            commitPatches([withImpliedFormat({ sheet: activeSheet, row: cell.row, col: cell.col, raw })]);
             select({ anchor: cell, focus: cell });
           }}
           onGoTo={goToReference}

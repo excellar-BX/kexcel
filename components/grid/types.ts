@@ -18,7 +18,7 @@ export interface Editing {
   source: "cell" | "bar";
 }
 
-export type ToggleKey = "bold" | "italic" | "underline" | "strike";
+export type ToggleKey = "bold" | "italic" | "underline" | "strike" | "wrap";
 
 /** What the toolbar and menus reflect: the active cell's format and view settings. */
 export interface EditorState {
@@ -33,6 +33,8 @@ export interface EditorState {
   currency: string;
   freeze: Freeze;
   activeCell: CellAddress;
+  /** Whether the selection includes a merged range. */
+  merged: boolean;
 }
 
 /** Every action the menus, toolbar, shortcuts and right-click menu can trigger. */
@@ -53,6 +55,9 @@ export interface Commands {
   changeDecimals(delta: 1 | -1): void;
   setFontSize(size: number): void;
   setBorders(mode: BorderMode): void;
+  /** Merges the selected cells into one, keeping the top-left value. */
+  mergeCells(): void;
+  unmergeCells(): void;
 
   insertRows(where: "above" | "below"): void;
   insertCols(where: "left" | "right"): void;

@@ -8,11 +8,12 @@ import {
   type CellAddress,
   type CellFormat,
   type Freeze,
+  type Scalar,
   type Workbook,
 } from "@/lib/engine";
 import type { Range } from "@/lib/sheet-ops";
 import { COL_COUNT, MIN_COL_WIDTH, OVERSCAN, ROW_COUNT, ROW_HEIGHT } from "./constants";
-import { ptToPx, type GridLayout } from "./layout";
+import { ptToPx, WRAP_LINE_HEIGHT, type GridLayout } from "./layout";
 import type { Editing, Selection } from "./types";
 
 const MIN_ROW_HEIGHT = 16;
@@ -70,8 +71,8 @@ export interface GridProps {
   onPointerStart: () => void;
   onEdit: () => void;
   onEditorChange: (value: string) => void;
-  onEditorKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-  onEditorFocus: (e: React.FocusEvent<HTMLInputElement>) => void;
+  onEditorKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onEditorFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   onColResize: (col: number, width: number) => void;
   onRowResize: (row: number, height: number) => void;
   onAutoFitCol: (col: number) => void;
@@ -247,72 +248,120 @@ export default function Grid(props: GridProps) {
   const layerOf = (row: number, col: number): Layer =>
     row < fr ? (col < fc ? "corner" : "top") : col < fc ? "left" : "main";
 
-  /** Fills, borders, gridlines and text for a block of cells. */
+  /** One cell's text, spanning `width` x `height`. Wrapped text breaks lines instead of spilling. */
+  const cellText = (
+    key: string,
+    value: Scalar,
+    format: CellFormat | undefined,
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+    spillTo: number,
+  ) => {
+    if (value === null) return null;
+    const error = isError(value);
+    const defaultAlign = typeof value === "number" ? "right" : typeof value === "string" ? "left" : "center";
+    const align = format?.align ?? defaultAlign;
+    const wrap = !!format?.wrap;
+    let textWidth = width;
+    // Text spills into empty neighbours on the right, as in other spreadsheets.
+    if (!wrap && align === "left" && typeof value === "string") {
+      const row = layout.rowAt(top);
+      for (let c = layout.colAt(left + width); c <= spillTo && wb.getRaw(sheet, row, c) === "" && !wb.mergeAt(sheet, row, c); c++) {
+        textWidth += layout.colWidth(c);
+      }
+    }
+    return (
+      <div
+        key={key}
+        className={`pointer-events-none absolute overflow-hidden ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"} ${
+          error ? "text-[var(--error)]" : ""
+        }`}
+        style={{
+          left,
+          top,
+          width: textWidth,
+          height,
+          lineHeight: wrap ? WRAP_LINE_HEIGHT : `${height}px`,
+          padding: wrap ? `${3 * z}px ${4 * z}px` : `0 ${4 * z}px`,
+          textAlign: align,
+          ...textStyle(format, z),
+        }}
+        title={error ? value.message : undefined}
+      >
+        {formatValue(value, format)}
+      </div>
+    );
+  };
+
+  /** Background colour and borders for a cell or merged range. */
+  const cellFill = (key: string, format: CellFormat | undefined, left: number, top: number, width: number, height: number) => {
+    if (!format?.fill && !format?.borders) return null;
+    const b = format.borders;
+    const line = "1px solid var(--fg)";
+    return (
+      <div
+        key={key}
+        className="absolute"
+        style={{
+          left: left - (b?.left ? 1 : 0),
+          top: top - (b?.top ? 1 : 0),
+          width: width + (b?.left ? 1 : 0),
+          height: height + (b?.top ? 1 : 0),
+          background: format.fill,
+          borderTop: b?.top ? line : undefined,
+          borderLeft: b?.left ? line : undefined,
+          borderRight: b?.right ? line : undefined,
+          borderBottom: b?.bottom ? line : undefined,
+        }}
+      />
+    );
+  };
+
+  /** Fills, borders, gridlines and text for a block of cells, with merged ranges drawn as one cell. */
   const renderCells = (r0: number, r1: number, c0: number, c1: number): React.ReactNode[] => {
     const fills: React.ReactNode[] = [];
     const lines: React.ReactNode[] = [];
+    const covers: React.ReactNode[] = [];
     const texts: React.ReactNode[] = [];
+
+    const merges = wb.merges(sheet).filter((m) => m.r1 >= r0 && m.r0 <= r1 && m.c1 >= c0 && m.c0 <= c1);
+    const covered = (row: number, col: number) =>
+      merges.some((m) => row >= m.r0 && row <= m.r1 && col >= m.c0 && col <= m.c1);
+
     for (let row = r0; row <= r1; row++) {
       const top = layout.rowTop(row);
       const height = layout.rowHeight(row);
       for (let col = c0; col <= c1; col++) {
+        if (merges.length && covered(row, col)) continue;
         const format = wb.getFormat(sheet, row, col);
         const left = layout.colLeft(col);
         const width = layout.colWidth(col);
-
-        if (format?.fill || format?.borders) {
-          const b = format.borders;
-          const line = "1px solid var(--fg)";
-          fills.push(
-            <div
-              key={`f${row},${col}`}
-              className="absolute"
-              style={{
-                left: left - (b?.left ? 1 : 0),
-                top: top - (b?.top ? 1 : 0),
-                width: width + (b?.left ? 1 : 0),
-                height: height + (b?.top ? 1 : 0),
-                background: format.fill,
-                borderTop: b?.top ? line : undefined,
-                borderLeft: b?.left ? line : undefined,
-                borderRight: b?.right ? line : undefined,
-                borderBottom: b?.bottom ? line : undefined,
-              }}
-            />,
-          );
-        }
-
-        const value = wb.getValue(sheet, row, col);
-        if (value === null) continue;
-        const error = isError(value);
-        const defaultAlign = typeof value === "number" ? "right" : typeof value === "string" ? "left" : "center";
-        const align = format?.align ?? defaultAlign;
-        let textWidth = width;
-        // Text spills into empty neighbours on the right, as in other spreadsheets.
-        if (align === "left" && typeof value === "string") {
-          for (let c = col + 1; c <= c1 && wb.getRaw(sheet, row, c) === ""; c++) textWidth += layout.colWidth(c);
-        }
-        texts.push(
-          <div
-            key={`t${row},${col}`}
-            className={`pointer-events-none absolute overflow-hidden whitespace-pre ${error ? "text-[var(--error)]" : ""}`}
-            style={{
-              left,
-              top,
-              width: textWidth,
-              height,
-              lineHeight: `${height}px`,
-              padding: `0 ${4 * z}px`,
-              textAlign: align,
-              ...textStyle(format, z),
-            }}
-            title={error ? value.message : undefined}
-          >
-            {formatValue(value, format)}
-          </div>,
-        );
+        fills.push(cellFill(`f${row},${col}`, format, left, top, width, height));
+        texts.push(cellText(`t${row},${col}`, wb.getValue(sheet, row, col), format, left, top, width, height, c1));
       }
     }
+
+    for (const m of merges) {
+      // The top-left cell's content and look fill the whole range; a cover hides the gridlines inside it.
+      const format = wb.getFormat(sheet, m.r0, m.c0);
+      const left = layout.colLeft(m.c0);
+      const top = layout.rowTop(m.r0);
+      const width = layout.colLeft(m.c1 + 1) - left;
+      const height = layout.rowTop(m.r1 + 1) - top;
+      const key = `${m.r0},${m.c0}`;
+      covers.push(
+        <div
+          key={`m${key}`}
+          className="absolute"
+          style={{ left, top, width: width - 1, height: height - 1, background: format?.fill ?? "var(--bg)" }}
+        />,
+      );
+      covers.push(cellFill(`mf${key}`, format?.borders ? { borders: format.borders } : undefined, left, top, width, height));
+      texts.push(cellText(`mt${key}`, wb.getValue(sheet, m.r0, m.c0), format, left, top, width, height, m.c1));
+    }
+
     if (gridlines) {
       for (let col = c0; col <= c1; col++) {
         lines.push(
@@ -333,7 +382,7 @@ export default function Grid(props: GridProps) {
         );
       }
     }
-    return [...fills, ...lines, ...texts];
+    return [...fills, ...lines, ...covers, ...texts];
   };
 
   const box = (r: Range) => ({
@@ -344,7 +393,21 @@ export default function Grid(props: GridProps) {
   });
   const selBox = box(range);
   const active = sel.anchor;
+  const cellBox = (row: number, col: number) => box(wb.mergeAt(sheet, row, col) ?? { r0: row, r1: row, c0: col, c1: col });
   const headerFont = 11 * z;
+
+  /** The editor grows to show long or multi-line content (Alt+Enter adds a line). */
+  const editorBox = () => {
+    if (!editing) return {};
+    const b = cellBox(editing.row, editing.col);
+    const f = wb.getFormat(sheet, editing.row, editing.col);
+    const fontPx = ptToPx(f?.fontSize ?? 10) * z;
+    const lines = editing.value.split("\n");
+    const longest = Math.max(...lines.map((l) => l.length));
+    const width = f?.wrap ? b.width : Math.min(600 * z, Math.max(b.width, (longest * 8 + 24) * z));
+    const height = Math.max(b.height, Math.ceil(lines.length * fontPx * WRAP_LINE_HEIGHT + 8 * z));
+    return { ...b, width, height };
+  };
 
   /** Selection, fill handle and editor, drawn in every layer and clipped by it. */
   const overlays = (layer: Layer) => (
@@ -352,7 +415,7 @@ export default function Grid(props: GridProps) {
       <div className="pointer-events-none absolute border border-[var(--accent)] bg-[var(--selection)]" style={selBox} />
       <div
         className="pointer-events-none absolute border-2 border-[var(--accent)]"
-        style={box({ r0: active.row, r1: active.row, c0: active.col, c1: active.col })}
+        style={cellBox(active.row, active.col)}
       />
       {fillPreview && (
         <div className="pointer-events-none absolute border-2 border-dashed border-[var(--accent)]" style={box(fillPreview)} />
@@ -366,8 +429,9 @@ export default function Grid(props: GridProps) {
         />
       )}
       {editing && layerOf(editing.row, editing.col) === layer && (
-        <input
+        <textarea
           value={editing.value}
+          rows={1}
           autoFocus={editing.source === "cell"}
           onFocus={props.onEditorFocus}
           onChange={(e) => props.onEditorChange(e.target.value)}
@@ -376,11 +440,12 @@ export default function Grid(props: GridProps) {
           onDoubleClick={(e) => e.stopPropagation()}
           spellCheck={false}
           aria-label="Cell editor"
-          className="absolute z-10 border-2 border-[var(--accent)] bg-[var(--bg)] text-[var(--fg)] shadow-lg outline-none"
+          className="absolute z-10 resize-none overflow-hidden border-2 border-[var(--accent)] bg-[var(--bg)] text-[var(--fg)] shadow-lg outline-none"
           style={{
-            ...box({ r0: editing.row, r1: editing.row, c0: editing.col, c1: editing.col }),
-            width: Math.min(600 * z, Math.max(layout.colWidth(editing.col) + 1, (editing.value.length * 8 + 24) * z)),
-            padding: `0 ${3 * z}px`,
+            ...editorBox(),
+            padding: `${2 * z}px ${3 * z}px`,
+            lineHeight: WRAP_LINE_HEIGHT,
+            whiteSpace: wb.getFormat(sheet, editing.row, editing.col)?.wrap ? "pre-wrap" : "pre",
             ...textStyle(wb.getFormat(sheet, editing.row, editing.col), z),
             color: undefined,
           }}

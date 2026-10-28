@@ -1,7 +1,8 @@
 import { formatNumber } from "./coerce";
+import { formatSerial, type DateStyle } from "./dates";
 import { isError, type Scalar } from "./types";
 
-export type NumberFormat = "general" | "number" | "currency" | "percent" | "scientific";
+export type NumberFormat = "general" | "number" | "currency" | "percent" | "scientific" | "date" | "time" | "datetime";
 export type HorizontalAlign = "left" | "center" | "right";
 export type FontFamily = "sans" | "serif" | "mono";
 
@@ -30,6 +31,10 @@ export interface CellFormat {
   decimals?: number;
   /** ISO 4217 code used by the currency format. */
   currency?: string;
+  /** How date and datetime formats write the date; ISO (2025-01-15) by default. */
+  dateStyle?: DateStyle;
+  /** Wrap long text onto more lines instead of spilling into the next cells. */
+  wrap?: boolean;
   borders?: Borders;
 }
 
@@ -59,6 +64,10 @@ export function shownDecimals(value: Scalar, format?: CellFormat): number {
     case "percent":
     case "scientific":
       return 2;
+    case "date":
+    case "time":
+    case "datetime":
+      return 0;
   }
   if (typeof value !== "number") return 0;
   const text = formatNumber(value);
@@ -82,6 +91,7 @@ export function formatValue(v: Scalar, format?: CellFormat | null, locale?: stri
       useGrouping: false,
     });
   }
+  if (fmt === "date" || fmt === "time" || fmt === "datetime") return formatSerial(v, fmt, format?.dateStyle, locale);
   const decimals = format?.decimals ?? 2;
   const digits = { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
   switch (fmt) {

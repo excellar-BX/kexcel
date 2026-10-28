@@ -23,6 +23,37 @@ export function numberFormatItems(c: Commands, s: EditorState): MenuEntry[] {
     },
     { type: "separator" },
     {
+      label: "Date",
+      shortcut: "2025-01-15",
+      checked: fmt === "date" && !s.format.dateStyle,
+      onSelect: () => c.applyFormat({ numFmt: "date", dateStyle: undefined, decimals: undefined, currency: undefined }),
+    },
+    {
+      label: "Date",
+      shortcut: "15 Jan 2025",
+      checked: fmt === "date" && s.format.dateStyle === "medium",
+      onSelect: () => c.applyFormat({ numFmt: "date", dateStyle: "medium", decimals: undefined, currency: undefined }),
+    },
+    {
+      label: "Long date",
+      shortcut: "Wed, 15 January 2025",
+      checked: fmt === "date" && s.format.dateStyle === "full",
+      onSelect: () => c.applyFormat({ numFmt: "date", dateStyle: "full", decimals: undefined, currency: undefined }),
+    },
+    {
+      label: "Time",
+      shortcut: "14:30",
+      checked: fmt === "time",
+      onSelect: () => c.applyFormat({ numFmt: "time", dateStyle: undefined, decimals: undefined, currency: undefined }),
+    },
+    {
+      label: "Date and time",
+      shortcut: "2025-01-15 14:30",
+      checked: fmt === "datetime",
+      onSelect: () => c.applyFormat({ numFmt: "datetime", decimals: undefined, currency: undefined }),
+    },
+    { type: "separator" },
+    {
       label: "Currency",
       checked: fmt === "currency",
       items: CURRENCIES.map((cur) => ({
@@ -46,7 +77,7 @@ export function insertDeleteItems(c: Commands): MenuEntry[] {
   ];
 }
 
-const FUNCTIONS = ["SUM", "AVERAGE", "COUNT", "MIN", "MAX", "IF", "SUMIF", "COUNTIF", "VLOOKUP", "ROUND"];
+const FUNCTIONS = ["SUM", "AVERAGE", "COUNT", "MIN", "MAX", "IF", "SUMIF", "COUNTIF", "VLOOKUP", "ROUND", "TODAY", "DATE"];
 
 function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEntry[] }[] {
   return [
@@ -157,6 +188,10 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
             onSelect: () => c.applyFormat({ align: a }),
           })),
         },
+        { label: "Wrap text", checked: !!s.format.wrap, onSelect: () => c.toggle("wrap") },
+        s.merged
+          ? { label: "Unmerge cells", onSelect: c.unmergeCells }
+          : { label: "Merge cells", onSelect: c.mergeCells },
         { type: "separator" },
         { label: "Clear formatting", shortcut: `${mod}\\`, onSelect: c.clearFormatting },
       ],

@@ -107,7 +107,10 @@ class StyleTable {
     const fontId = this.font(f);
     const fillId = this.fill(f.fill);
     const borderId = this.border(f.borders);
-    const align = f.align ? `<alignment horizontal="${f.align}"/>` : "";
+    const align =
+      f.align || f.wrap
+        ? `<alignment${f.align ? ` horizontal="${f.align}"` : ""}${f.wrap ? ' wrapText="1"' : ""}/>`
+        : "";
     id = this.xfXml.length;
     this.xfs.set(key, id);
     this.xfXml.push(
@@ -202,13 +205,20 @@ function sheetXml(wb: Workbook, sheet: string, styles: StyleTable): string {
     })
     .join("");
 
+  const merges = wb.merges(sheet);
+  const mergeXml = merges.length
+    ? `<mergeCells count="${merges.length}">${merges
+        .map((m) => `<mergeCell ref="${addressToName({ row: m.r0, col: m.c0 })}:${addressToName({ row: m.r1, col: m.c1 })}"/>`)
+        .join("")}</mergeCells>`
+    : "";
+
   const used = wb.usedBounds(sheet);
   const dimension = used ? `A1:${colToLetters(used.cols - 1)}${used.rows}` : "A1";
   return (
     XML_HEAD +
     `<worksheet xmlns="${NS_MAIN}" xmlns:r="${NS_REL}">` +
     `<dimension ref="${dimension}"/>${views}<sheetFormatPr defaultRowHeight="18"/>${cols}` +
-    `<sheetData>${rowXml}</sheetData></worksheet>`
+    `<sheetData>${rowXml}</sheetData>${mergeXml}</worksheet>`
   );
 }
 

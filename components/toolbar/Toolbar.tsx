@@ -13,6 +13,7 @@ import {
   DecimalIncreaseIcon,
   EraserIcon,
   FillIcon,
+  MergeIcon,
   MinusIcon,
   PlusIcon,
   PrintIcon,
@@ -20,6 +21,7 @@ import {
   SortIcon,
   SparklesIcon,
   UndoIcon,
+  WrapIcon,
   type BorderMode,
 } from "@/components/ui/icons";
 import { DEFAULT_FONT_SIZE, type FontFamily } from "@/lib/engine";
@@ -307,6 +309,16 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
           onSelect: () => c.applyFormat({ align: a }),
         }))}
       />
+      <Button label="Wrap text" onClick={() => c.toggle("wrap")} active={!!f.wrap}>
+        <WrapIcon size={17} />
+      </Button>
+      <Button
+        label={s.merged ? "Unmerge cells" : "Merge cells"}
+        onClick={s.merged ? c.unmergeCells : c.mergeCells}
+        active={s.merged}
+      >
+        <MergeIcon size={17} />
+      </Button>
       <Divider />
 
       <Button label={`Clear formatting (${mod}\\)`} onClick={c.clearFormatting}>

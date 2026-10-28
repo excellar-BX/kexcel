@@ -1,7 +1,8 @@
 import { addressToName, cellKey, nameToAddress, parseKey } from "./address";
 import { evaluateFormula, type CellReader } from "./evaluate";
 import { sameFormat, type CellFormat } from "./format";
-import { isFormula, parseLiteral } from "./literal";
+import { VOLATILE_FUNCTIONS } from "./functions";
+import { impliedDateKind, isFormula, parseLiteral } from "./literal";
 import { collectReferences, parseFormula, type Node } from "./parser";
 import { adjustForStructureChange, renameSheetInFormula, type Axis } from "./references";
 import { CellError, type Scalar } from "./types";
@@ -12,6 +13,16 @@ interface Cell {
   value: Scalar;
   /** Global keys ("sheetId!row,col") of the cells this cell's formula reads. */
   deps: Set<string>;
+  /** Uses TODAY() or NOW(), so it recalculates on every change. */
+  volatile?: boolean;
+}
+
+/** An inclusive block of cells, used for merged ranges. */
+export interface CellRange {
+  r0: number;
+  r1: number;
+  c0: number;
+  c1: number;
 }
 
 interface SheetState {
@@ -23,6 +34,7 @@ interface SheetState {
   colWidths: Map<number, number>;
   rowHeights: Map<number, number>;
   freeze: Freeze;
+  merges: CellRange[];
 }
 
 /** Rows at the top and columns at the left that stay in place while scrolling. */
@@ -60,6 +72,8 @@ export interface SheetJSON {
   colWidths?: Record<string, number>;
   rowHeights?: Record<string, number>;
   freeze?: Freeze;
+  /** Merged ranges such as "A1:C1". */
+  merges?: string[];
 }
 
 export interface WorkbookJSON {
@@ -116,8 +130,21 @@ export class Workbook {
       for (const [c, w] of Object.entries(s.colWidths ?? {})) sheet.colWidths.set(Number(c), w);
       for (const [r, h] of Object.entries(s.rowHeights ?? {})) sheet.rowHeights.set(Number(r), h);
       if (s.freeze) sheet.freeze = { rows: Math.max(0, s.freeze.rows | 0), cols: Math.max(0, s.freeze.cols | 0) };
+      for (const ref of s.merges ?? []) {
+        const [a, b] = ref.split(":").map(nameToAddress);
+        if (a && b) sheet.merges.push({ r0: a.row, c0: a.col, r1: b.row, c1: b.col });
+      }
     }
     if (this.list.length === 0) this.createSheet("Sheet1");
+    // Typed dates without a number format (from CSV files, or saved before dates
+    // were values) would show as day numbers, so they get a date format.
+    for (const sheet of this.list) {
+      for (const [key, cell] of sheet.cells) {
+        if (isFormula(cell.raw) || sheet.formats.get(key)?.numFmt) continue;
+        const kind = impliedDateKind(cell.raw);
+        if (kind) sheet.formats.set(key, { ...sheet.formats.get(key), numFmt: kind });
+      }
+    }
     this.rebuild();
   }
 
@@ -136,6 +163,13 @@ export class Workbook {
           colWidths: Object.fromEntries(s.colWidths),
           rowHeights: Object.fromEntries(s.rowHeights),
           ...(s.freeze.rows || s.freeze.cols ? { freeze: { ...s.freeze } } : {}),
+          ...(s.merges.length
+            ? {
+                merges: s.merges.map(
+                  (m) => `${addressToName({ row: m.r0, col: m.c0 })}:${addressToName({ row: m.r1, col: m.c1 })}`,
+                ),
+              }
+            : {}),
         };
       }),
     };
@@ -196,6 +230,7 @@ export class Workbook {
     src.colWidths.forEach((w, c) => copy.colWidths.set(c, w));
     src.rowHeights.forEach((h, r) => copy.rowHeights.set(r, h));
     copy.freeze = { ...src.freeze };
+    copy.merges = src.merges.map((m) => ({ ...m }));
     this.rebuild();
     return copy.id;
   }
@@ -367,6 +402,27 @@ export class Workbook {
     this.sheet(sheet).freeze = { rows: Math.max(0, freeze.rows | 0), cols: Math.max(0, freeze.cols | 0) };
   }
 
+  /** Merged ranges on a sheet. */
+  merges(sheet: string): readonly CellRange[] {
+    return this.byId.get(sheet)?.merges ?? [];
+  }
+
+  /** The merged range covering a cell, if any. */
+  mergeAt(sheet: string, row: number, col: number): CellRange | undefined {
+    return this.merges(sheet).find((m) => row >= m.r0 && row <= m.r1 && col >= m.c0 && col <= m.c1);
+  }
+
+  /** Replaces a sheet's merged ranges; single cells and overlaps are dropped. */
+  setMerges(sheet: string, merges: CellRange[]) {
+    const kept: CellRange[] = [];
+    for (const m of merges) {
+      if (m.r0 === m.r1 && m.c0 === m.c1) continue;
+      const overlaps = kept.some((k) => m.r0 <= k.r1 && m.r1 >= k.r0 && m.c0 <= k.c1 && m.c1 >= k.c0);
+      if (!overlaps) kept.push({ ...m });
+    }
+    this.sheet(sheet).merges = kept;
+  }
+
   // ---- Structure -------------------------------------------------------------
 
   /** Inserts `count` blank rows or columns before index `at`. */
@@ -416,6 +472,24 @@ export class Workbook {
     target.formats = remap(target.formats);
     if (axis === "row") target.rowHeights = remapSizes(target.rowHeights);
     else target.colWidths = remapSizes(target.colWidths);
+
+    // Merged ranges move, grow or shrink with their rows and columns.
+    const lo = axis === "row" ? "r0" : "c0";
+    const hi = axis === "row" ? "r1" : "c1";
+    target.merges = target.merges.flatMap((m) => {
+      let a = m[lo];
+      let b = m[hi];
+      if (count > 0) {
+        if (a >= at) a += count;
+        if (b >= at) b += count;
+      } else {
+        a = a < at ? a : a >= end ? a + count : at;
+        b = b < at ? b : b >= end ? b + count : at - 1;
+        if (b < a) return [];
+      }
+      const moved = { ...m, [lo]: a, [hi]: b };
+      return moved.r0 === moved.r1 && moved.c0 === moved.c1 ? [] : [moved];
+    });
 
     // Rows or columns added or removed inside the frozen area grow or shrink it.
     const key = axis === "row" ? "rows" : "cols";
@@ -467,6 +541,7 @@ export class Workbook {
       colWidths: new Map(),
       rowHeights: new Map(),
       freeze: { rows: 0, cols: 0 },
+      merges: [],
     };
     this.list.push(sheet);
     this.byId.set(sheetId, sheet);
@@ -491,7 +566,7 @@ export class Workbook {
         const target = ref.sheet === undefined ? sheetId : this.byName.get(ref.sheet.toLowerCase())?.id;
         if (target) deps.add(globalKey(target, ref.row, ref.col));
       }
-      return { raw, ast, value: null, deps };
+      return { raw, ast, value: null, deps, volatile: callsAny(ast, VOLATILE_FUNCTIONS) };
     } catch (e) {
       const message = e instanceof Error ? e.message : "Invalid formula";
       return { raw, ast: null, value: new CellError("#ERROR!", message), deps: new Set() };
@@ -544,9 +619,12 @@ export class Workbook {
   }
 
   private recalculate(seeds: Set<string>) {
-    // Everything downstream of the edited cells needs recomputing.
+    // Everything downstream of the edited cells needs recomputing, plus TODAY() and NOW().
     const affected = new Set(seeds);
-    const stack = [...seeds];
+    for (const sheet of this.list) {
+      for (const [key, cell] of sheet.cells) if (cell.volatile) affected.add(`${sheet.id}!${key}`);
+    }
+    const stack = [...affected];
     while (stack.length) {
       const key = stack.pop()!;
       for (const d of this.dependents.get(key) ?? []) {
@@ -585,5 +663,19 @@ export class Workbook {
       const cell = this.cellAt(key);
       if (cell?.ast) cell.value = new CellError("#CYCLE!", "Circular reference");
     }
+  }
+}
+
+function callsAny(node: Node, names: Set<string>): boolean {
+  switch (node.type) {
+    case "call":
+      return names.has(node.name) || node.args.some((a) => callsAny(a, names));
+    case "unary":
+    case "percent":
+      return callsAny(node.arg, names);
+    case "binary":
+      return callsAny(node.left, names) || callsAny(node.right, names);
+    default:
+      return false;
   }
 }

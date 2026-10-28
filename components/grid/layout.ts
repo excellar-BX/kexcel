@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_SIZE, parseKey, type Workbook } from "@/lib/engine";
+import { DEFAULT_FONT_SIZE, formatValue, parseKey, type Workbook } from "@/lib/engine";
 import {
   COL_COUNT,
   COL_HEADER_HEIGHT,
@@ -13,6 +13,20 @@ export const ptToPx = (pt: number) => (pt * 4) / 3;
 
 /** Unscaled row height needed to fit text of a given size. */
 const heightForFont = (pt: number) => Math.ceil(ptToPx(pt) * 1.25 + 7);
+
+/** Line height of wrapped text, as a multiple of the font size. */
+export const WRAP_LINE_HEIGHT = 1.3;
+
+/**
+ * Estimated unscaled height of wrapped text in a column. It assumes an average
+ * character width rather than measuring, which is close enough for row sizing.
+ */
+function heightForWrapped(text: string, width: number, pt: number) {
+  const px = ptToPx(pt);
+  const perLine = Math.max(1, Math.floor((width - 8) / (px * 0.55)));
+  const lines = text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.length / perLine)), 0);
+  return Math.ceil(lines * px * WRAP_LINE_HEIGHT + 6);
+}
 
 function upperBound(starts: number[], count: number, x: number) {
   let lo = 0;
@@ -54,12 +68,16 @@ export class GridLayout {
 
     const heights = Array<number>(ROW_COUNT).fill(ROW_HEIGHT);
     const manual = wb.rowHeights(sheet);
-    // Rows without a manual height grow to fit their largest font.
+    // Rows without a manual height grow to fit their largest font and any wrapped text.
     for (const key of wb.formatKeys(sheet)) {
       const { row, col } = parseKey(key);
-      const size = wb.getFormat(sheet, row, col)?.fontSize;
-      if (row < ROW_COUNT && size && size > DEFAULT_FONT_SIZE && !manual.has(row)) {
-        heights[row] = Math.max(heights[row], heightForFont(size));
+      if (row >= ROW_COUNT || manual.has(row)) continue;
+      const f = wb.getFormat(sheet, row, col);
+      const size = f?.fontSize ?? DEFAULT_FONT_SIZE;
+      if (size > DEFAULT_FONT_SIZE) heights[row] = Math.max(heights[row], heightForFont(size));
+      if (f?.wrap && col < COL_COUNT && !wb.mergeAt(sheet, row, col)) {
+        const text = formatValue(wb.getValue(sheet, row, col), f);
+        if (text) heights[row] = Math.max(heights[row], heightForWrapped(text, widths[col], size));
       }
     }
     for (const [r, h] of manual) if (r < ROW_COUNT) heights[r] = h;

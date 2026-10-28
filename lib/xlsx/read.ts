@@ -11,7 +11,7 @@ import {
   type SheetJSON,
   type WorkbookJSON,
 } from "@/lib/engine";
-import { builtinFormat, formatFromCode, isDateFormat, serialToDateText } from "./numfmt";
+import { builtinFormat, dateKindOf, formatFromCode, isDateFormat, serialToDateText } from "./numfmt";
 import { child, children, parseXml, type XmlNode } from "./xml";
 
 export interface ImportLimits {
@@ -82,12 +82,14 @@ function readStyles(xml: XmlNode | undefined): Style[] {
     const code = customFormats.get(numFmtId) ?? builtinFormat(numFmtId);
     const isDate = isDateFormat(numFmtId, code);
     let f: CellFormat | null = { ...fonts[Number(xf.attrs.fontId ?? 0)] };
-    if (!isDate) f = mergeFormat(f, formatFromCode(code));
+    f = mergeFormat(f, isDate ? { numFmt: dateKindOf(numFmtId, code) } : formatFromCode(code));
     const fill = fills[Number(xf.attrs.fillId ?? 0)];
     if (fill) f = mergeFormat(f ?? {}, { fill });
     const border = borders[Number(xf.attrs.borderId ?? 0)];
     if (border && Object.values(border).some(Boolean)) f = mergeFormat(f ?? {}, { borders: border });
-    const h = child(xf, "alignment")?.attrs.horizontal;
+    const alignment = child(xf, "alignment");
+    if (alignment?.attrs.wrapText === "1" || alignment?.attrs.wrapText === "true") f = mergeFormat(f ?? {}, { wrap: true });
+    const h = alignment?.attrs.horizontal;
     const align = h === "center" || h === "centerContinuous" ? "center" : h === "right" ? "right" : h === "left" ? "left" : undefined;
     if (align) f = mergeFormat(f ?? {}, { align });
     return { format: f && Object.keys(f).length ? f : null, isDate };
@@ -155,7 +157,6 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
   const styles = readStyles(stylesPath ? read(stylesPath) : undefined);
 
   const notes: string[] = [];
-  let merged = 0;
   let clipped = false;
   const usedNames = new Set<string>();
   const sheets: SheetJSON[] = [];
@@ -227,14 +228,20 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
               raw = `'${v}`;
               break;
             default:
-              if (v !== "") raw = style?.isDate ? textRaw(serialToDateText(Number(v))) : v;
+              // Dates come in as typed text (2025-01-15), which Kexcel reads back as a date value.
+              if (v !== "") raw = style?.isDate ? serialToDateText(Number(v)) : v;
           }
         }
         if (raw !== "") cells[name] = raw;
       }
     }
 
-    merged += children(child(ws, "mergeCells"), "mergeCell").length;
+    const merges = children(child(ws, "mergeCells"), "mergeCell")
+      .map((m) => m.attrs.ref ?? "")
+      .filter((ref) => {
+        const [a, b] = ref.split(":").map(nameToAddress);
+        return a && b && b.row < limits.maxRows && b.col < limits.maxCols;
+      });
 
     const pane = child(child(child(ws, "sheetViews"), "sheetView"), "pane");
     const frozen = pane && (pane.attrs.state === "frozen" || pane.attrs.state === "frozenSplit");
@@ -242,13 +249,21 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
       ? { rows: Math.round(Number(pane.attrs.ySplit ?? 0)), cols: Math.round(Number(pane.attrs.xSplit ?? 0)) }
       : undefined;
 
-    sheets.push({ id: `s${sheets.length + 1}`, name, cells, formats, colWidths, rowHeights, ...(freeze ? { freeze } : {}) });
+    sheets.push({
+      id: `s${sheets.length + 1}`,
+      name,
+      cells,
+      formats,
+      colWidths,
+      rowHeights,
+      ...(freeze ? { freeze } : {}),
+      ...(merges.length ? { merges } : {}),
+    });
   }
 
   if (sheets.length === 0) throw new Error("This workbook has no sheets Kexcel can open.");
 
   if (clipped) notes.push(`Only the first ${limits.maxRows.toLocaleString()} rows and ${limits.maxCols} columns of each sheet were imported.`);
-  if (merged) notes.push(`${merged} merged cell range${merged === 1 ? " was" : "s were"} unmerged; Kexcel doesn't merge cells yet.`);
 
   // Formulas Kexcel can't run yet, such as whole-column ranges or unknown functions.
   const workbook: WorkbookJSON = { sheets };
