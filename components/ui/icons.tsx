@@ -54,6 +54,11 @@ export const FillIcon = icon([
   "M2 13h15",
   "M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z",
 ]);
+export const PrintIcon = icon([
+  "M6 9V3h12v6",
+  "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2",
+  "M6 14h12v7H6z",
+]);
 export const SearchIcon = icon(["M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z", "m21 21-4.3-4.3"]);
 
 /** A letter with a colour bar underneath, for text and fill colour buttons. */

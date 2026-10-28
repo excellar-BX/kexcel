@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import PrintDialog, { loadOptions, type PrintScope } from "@/components/print/PrintDialog";
+import PrintView, { type PrintJob, type PrintOptions } from "@/components/print/PrintView";
 import MenuBar from "@/components/toolbar/MenuBar";
 import SheetTabs from "@/components/toolbar/SheetTabs";
 import ShortcutsDialog from "@/components/toolbar/ShortcutsDialog";
@@ -93,6 +96,8 @@ function Spreadsheet({ docId }: { docId: string }) {
   const [findOpen, setFindOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [nameBox, setNameBox] = useState<string | null>(null);
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
 
   const dirtyRef = useRef(false);
   const historyRef = useRef<{ undo: HistoryEntry[]; redo: HistoryEntry[] }>({ undo: [], redo: [] });
@@ -418,6 +423,66 @@ function Spreadsheet({ docId }: { docId: string }) {
     };
   });
 
+  // ---- Printing ----------------------------------------------------------------
+
+  /** The cells to print for a scope: the used area, or the selection trimmed to it. */
+  const printSheets = (scope: PrintScope): PrintJob["sheets"] => {
+    const used = (id: string): Range | null => {
+      const b = wb.usedBounds(id);
+      return b ? { r0: 0, r1: b.rows - 1, c0: 0, c1: b.cols - 1 } : null;
+    };
+    if (scope === "all") {
+      return wb.sheets.flatMap((s) => {
+        const r = used(s.id);
+        return r ? [{ id: s.id, range: r }] : [];
+      });
+    }
+    const area = used(activeSheet);
+    if (!area) return [];
+    if (scope === "sheet") return [{ id: activeSheet, range: area }];
+    const r = { ...range };
+    if (r.r0 === 0 && r.r1 === ROW_COUNT - 1) r.r1 = Math.max(r.r0, area.r1);
+    if (r.c0 === 0 && r.c1 === COL_COUNT - 1) r.c1 = Math.max(r.c0, area.c1);
+    return [{ id: activeSheet, range: r }];
+  };
+
+  const startPrint = (scope: PrintScope, options: PrintOptions) => {
+    setPrintOpen(false);
+    setPrintJob({ sheets: printSheets(scope), options });
+  };
+
+  // Open the browser's print dialog once the print view is on the page.
+  useEffect(() => {
+    if (!printJob) return;
+    const done = () => setPrintJob(null);
+    window.addEventListener("afterprint", done, { once: true });
+    window.print();
+    return () => window.removeEventListener("afterprint", done);
+  }, [printJob]);
+
+  // Ctrl+P anywhere opens our dialog; printing from the browser menu still gets a clean sheet.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        if (editing) commitEdit();
+        setPrintOpen(true);
+      }
+    };
+    const onBeforePrint = () => {
+      if (!printJob) flushSync(() => setPrintJob({ sheets: printSheets("sheet"), options: loadOptions(gridlines) }));
+    };
+    const onAfterPrint = () => setPrintJob(null);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("beforeprint", onBeforePrint);
+    window.addEventListener("afterprint", onAfterPrint);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("beforeprint", onBeforePrint);
+      window.removeEventListener("afterprint", onAfterPrint);
+    };
+  });
+
   // ---- Files -----------------------------------------------------------------
 
   const importFile = async (file: File) => {
@@ -699,6 +764,10 @@ function Spreadsheet({ docId }: { docId: string }) {
     },
     importCSV: () => fileRef.current?.click(),
     exportCSV,
+    print: () => {
+      if (editing) commitEdit();
+      setPrintOpen(true);
+    },
     renameWorkbook: () => {
       titleRef.current?.focus();
       titleRef.current?.select();
@@ -862,7 +931,8 @@ function Spreadsheet({ docId }: { docId: string }) {
   };
 
   return (
-    <div className="flex h-dvh flex-col bg-[var(--bg)] text-[var(--fg)]">
+    <>
+      <div className="flex h-dvh flex-col bg-[var(--bg)] text-[var(--fg)] print:hidden">
       {/* Title and menus */}
       <header className="flex items-start gap-3 px-3 pt-2">
         <Link
@@ -1016,6 +1086,19 @@ function Spreadsheet({ docId }: { docId: string }) {
       </footer>
 
       {menu && <CellContextMenu {...menu} commands={commands} onClose={() => setMenu(null)} />}
+      {printOpen && (
+        <PrintDialog
+          gridlines={gridlines}
+          selection={multiCell ? range : null}
+          sheetCount={wb.sheets.length}
+          hasContent={(scope) => printSheets(scope).length > 0}
+          onPrint={startPrint}
+          onClose={() => {
+            setPrintOpen(false);
+            focusGrid();
+          }}
+        />
+      )}
       {shortcutsOpen && (
         <ShortcutsDialog
           onClose={() => {
@@ -1043,6 +1126,8 @@ function Spreadsheet({ docId }: { docId: string }) {
           if (file) void importFile(file);
         }}
       />
-    </div>
+      </div>
+      {printJob && <PrintView wb={wb} job={printJob} title={title} />}
+    </>
   );
 }

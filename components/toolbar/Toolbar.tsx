@@ -13,6 +13,7 @@ import {
   FillIcon,
   MinusIcon,
   PlusIcon,
+  PrintIcon,
   RedoIcon,
   SortIcon,
   UndoIcon,
@@ -187,6 +188,9 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
       </Button>
       <Button label={`Redo (${mod}Y)`} onClick={c.redo} disabled={!s.canRedo}>
         <RedoIcon size={17} />
+      </Button>
+      <Button label={`Print (${mod}P)`} onClick={c.print}>
+        <PrintIcon size={17} />
       </Button>
       <Divider />
 

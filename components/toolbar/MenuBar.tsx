@@ -59,6 +59,8 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
         { type: "separator" },
         { label: "Import CSV…", onSelect: c.importCSV },
         { label: "Download as CSV (current tab)", onSelect: c.exportCSV },
+        { type: "separator" },
+        { label: "Print", shortcut: `${mod}P`, onSelect: c.print },
       ],
     },
     {

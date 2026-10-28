@@ -72,6 +72,7 @@ export interface Commands {
   makeCopy(): void;
   importCSV(): void;
   exportCSV(): void;
+  print(): void;
   renameWorkbook(): void;
 
   setZoom(zoom: number): void;
