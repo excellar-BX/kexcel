@@ -1,4 +1,4 @@
-import { AIError, aiEnabled, aiModel, askSheet, checkSheet, explainFormula, writeFormula } from "@/lib/ai/claude.server";
+import { AIError, aiModel, aiProvider, askSheet, checkSheet, explainFormula, writeFormula } from "@/lib/ai/ai.server";
 import type { AIRequest, AIResponse } from "@/lib/ai/schemas";
 
 const MAX_BODY_BYTES = 200_000;
@@ -36,7 +36,8 @@ export async function POST(request: Request) {
   }
 
   if (body.action === "status") {
-    return reply({ ok: true, action: "status", enabled: aiEnabled(), model: aiModel() });
+    const provider = aiProvider();
+    return reply({ ok: true, action: "status", enabled: provider !== null, provider, model: provider ? aiModel() : "" });
   }
 
   const who = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";

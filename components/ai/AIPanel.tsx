@@ -98,12 +98,18 @@ export interface AIPanelProps {
 
 export default function AIPanel(props: AIPanelProps) {
   const { wb, sheet, selection, active, tab } = props;
-  const [status, setStatus] = useState<{ enabled: boolean; model: string } | null>(null);
+  const [status, setStatus] = useState<{ enabled: boolean; model: string; provider: string } | null>(null);
 
   useEffect(() => {
     let live = true;
     void callAI({ action: "status" }).then((r) => {
-      if (live) setStatus(r.ok && r.action === "status" ? { enabled: r.enabled, model: r.model } : { enabled: false, model: "" });
+      if (live) {
+        setStatus(
+          r.ok && r.action === "status"
+            ? { enabled: r.enabled, model: r.model, provider: r.provider === "groq" ? "Groq" : "Anthropic" }
+            : { enabled: false, model: "", provider: "" },
+        );
+      }
     });
     return () => {
       live = false;
@@ -166,7 +172,7 @@ export default function AIPanel(props: AIPanelProps) {
       </div>
       {status?.enabled && (
         <p className="border-t border-[var(--border)] px-3 py-2 text-[11px] text-[var(--muted)]">
-          Uses {status.model}. Your sheet&apos;s contents are sent to the AI service with each request. AI can make
+          Uses {status.model} via {status.provider}. Your sheet&apos;s contents are sent to {status.provider} with each request. AI can make
           mistakes, so check results before relying on them.
         </p>
       )}
@@ -178,14 +184,17 @@ function SetupNote() {
   return (
     <div className="space-y-3 text-sm">
       <p className="font-medium">AI isn&apos;t switched on yet.</p>
-      <p className="text-[var(--muted)]">To turn it on, add an Anthropic API key to the project:</p>
+      <p className="text-[var(--muted)]">To turn it on, add an API key from Groq or Anthropic to the project:</p>
       <ol className="list-decimal space-y-1.5 pl-5 text-[var(--muted)]">
         <li>
-          Create a key at <span className="font-mono text-[var(--fg)]">console.anthropic.com</span>.
+          Create a key at <span className="font-mono text-[var(--fg)]">console.groq.com</span> (free tier) or{" "}
+          <span className="font-mono text-[var(--fg)]">console.anthropic.com</span>.
         </li>
         <li>
-          Add this line to <span className="font-mono text-[var(--fg)]">.env.local</span>:
-          <pre className="mt-1 rounded bg-[var(--header-bg)] px-2 py-1 font-mono text-xs text-[var(--fg)]">ANTHROPIC_API_KEY=sk-ant-…</pre>
+          Add one of these lines to <span className="font-mono text-[var(--fg)]">.env.local</span>:
+          <pre className="mt-1 rounded bg-[var(--header-bg)] px-2 py-1 font-mono text-xs text-[var(--fg)]">
+            {"GROQ_API_KEY=gsk_…\nANTHROPIC_API_KEY=sk-ant-…"}
+          </pre>
         </li>
         <li>Restart the dev server.</li>
       </ol>

@@ -14,7 +14,7 @@ npm test        # formula engine tests
 
 The ✨ AI button (and the AI menu) opens a panel that can write a formula from a plain-English request, explain a formula, answer questions about a tab, and check a tab for likely mistakes. Formulas are checked by Kexcel's own engine and previewed before you insert them.
 
-To turn it on, copy `.env.example` to `.env.local`, set `ANTHROPIC_API_KEY`, and restart `npm run dev`. The key stays on the server (`app/api/ai/route.ts`); the browser never sees it. The route has a simple in-memory rate limit, so add sign-in and proper limits before deploying it publicly.
+To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tier at console.groq.com) or `ANTHROPIC_API_KEY`, and restart `npm run dev`. With both set, Anthropic is used unless `AI_PROVIDER=groq`. Keys stay on the server (`lib/ai/`, `app/api/ai/route.ts`); the browser never sees them. The route has a simple in-memory rate limit, so add sign-in and proper limits before deploying it publicly.
 
 ## What works today
 
