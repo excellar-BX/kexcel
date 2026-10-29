@@ -87,6 +87,18 @@ describe("xlsx round trip", () => {
     expect(back.merges(sales.id)).toEqual([{ r0: 0, c0: 3, r1: 1, c1: 4 }]);
   });
 
+  it("keeps dropdown lists", () => {
+    const wb = Workbook.fromJSON({ sheets: [{ id: "s1", name: "S", cells: { A1: "Yes" } }] });
+    wb.setValidations("s1", [
+      { id: "a", range: { r0: 0, r1: 9, c0: 0, c1: 0 }, items: ["Yes", "No", 'Say "maybe"'], strict: true },
+      { id: "b", range: { r0: 0, r1: 9, c0: 1, c1: 1 }, source: "Lists!A1:A5", strict: false },
+    ]);
+    const back = Workbook.fromJSON(readXlsx(writeXlsx(wb), LIMITS).workbook);
+    const [a, b] = back.validations("s1");
+    expect(a).toMatchObject({ range: { r0: 0, r1: 9, c0: 0, c1: 0 }, items: ["Yes", "No", 'Say "maybe"'], strict: true });
+    expect(b).toMatchObject({ range: { r0: 0, r1: 9, c0: 1, c1: 1 }, source: "Lists!A1:A5", strict: false });
+  });
+
   it("keeps dates, times and wrapped text", () => {
     const wb = Workbook.fromJSON({
       sheets: [

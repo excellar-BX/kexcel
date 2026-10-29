@@ -1,4 +1,4 @@
-import { addressToName, cellKey, nameToAddress, parseKey } from "./address";
+import { addressToName, cellKey, nameToAddress, nameToRange, parseKey, rangeToName } from "./address";
 import { evaluateFormula, type CellReader } from "./evaluate";
 import { sameFormat, type CellFormat } from "./format";
 import { VOLATILE_FUNCTIONS } from "./functions";
@@ -25,6 +25,53 @@ export interface CellRange {
   c1: number;
 }
 
+/** A conditional formatting rule: cells in `range` that meet the condition get the style. */
+export interface ConditionalRule {
+  id: string;
+  range: CellRange;
+  kind: "greater" | "less" | "between" | "equal" | "notEqual" | "contains" | "blank" | "notBlank" | "duplicate" | "scale" | "bar";
+  /** Values the condition compares with, as typed. */
+  values?: string[];
+  style?: { fill?: string; color?: string; bold?: boolean };
+  /** Colour scales: one hue from low to high, or two hues around a neutral middle. */
+  scale?: "blue" | "orange" | "diverging";
+}
+
+/** A dropdown list for cells: the items are typed out, or come from a range such as Lists!A1:A9. */
+export interface ValidationRule {
+  id: string;
+  range: CellRange;
+  items?: string[];
+  source?: string;
+  /** Reject values that aren't in the list, instead of just marking them. */
+  strict: boolean;
+}
+
+export type ChartType = "column" | "bar" | "line" | "area" | "pie";
+
+/** A chart floating over the sheet, drawn from a range. Position and size are unscaled pixels. */
+export interface ChartSpec {
+  id: string;
+  type: ChartType;
+  range: CellRange;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+type SavedRange<T> = Omit<T, "range"> & { range: string };
+
+const saveRanges = <T extends { range: CellRange }>(items: T[]): SavedRange<T>[] =>
+  items.map((it) => ({ ...it, range: rangeToName(it.range) }));
+
+const loadRanges = <T extends { range: CellRange }>(items: SavedRange<T>[] | undefined): T[] =>
+  (items ?? []).flatMap((it) => {
+    const range = typeof it.range === "string" ? nameToRange(it.range) : null;
+    return range ? [{ ...it, range } as T] : [];
+  });
+
 interface SheetState {
   id: string;
   name: string;
@@ -35,6 +82,9 @@ interface SheetState {
   rowHeights: Map<number, number>;
   freeze: Freeze;
   merges: CellRange[];
+  rules: ConditionalRule[];
+  validations: ValidationRule[];
+  charts: ChartSpec[];
 }
 
 /** Rows at the top and columns at the left that stay in place while scrolling. */
@@ -74,6 +124,9 @@ export interface SheetJSON {
   freeze?: Freeze;
   /** Merged ranges such as "A1:C1". */
   merges?: string[];
+  conditional?: SavedRange<ConditionalRule>[];
+  validations?: SavedRange<ValidationRule>[];
+  charts?: SavedRange<ChartSpec>[];
 }
 
 export interface WorkbookJSON {
@@ -134,6 +187,9 @@ export class Workbook {
         const [a, b] = ref.split(":").map(nameToAddress);
         if (a && b) sheet.merges.push({ r0: a.row, c0: a.col, r1: b.row, c1: b.col });
       }
+      sheet.rules = loadRanges<ConditionalRule>(s.conditional);
+      sheet.validations = loadRanges<ValidationRule>(s.validations);
+      sheet.charts = loadRanges<ChartSpec>(s.charts);
     }
     if (this.list.length === 0) this.createSheet("Sheet1");
     // Typed dates without a number format (from CSV files, or saved before dates
@@ -170,6 +226,9 @@ export class Workbook {
                 ),
               }
             : {}),
+          ...(s.rules.length ? { conditional: saveRanges(s.rules) } : {}),
+          ...(s.validations.length ? { validations: saveRanges(s.validations) } : {}),
+          ...(s.charts.length ? { charts: saveRanges(s.charts) } : {}),
         };
       }),
     };
@@ -231,6 +290,9 @@ export class Workbook {
     src.rowHeights.forEach((h, r) => copy.rowHeights.set(r, h));
     copy.freeze = { ...src.freeze };
     copy.merges = src.merges.map((m) => ({ ...m }));
+    copy.rules = src.rules.map((r) => ({ ...r, range: { ...r.range } }));
+    copy.validations = src.validations.map((v) => ({ ...v, range: { ...v.range } }));
+    copy.charts = src.charts.map((c) => ({ ...c, range: { ...c.range } }));
     this.rebuild();
     return copy.id;
   }
@@ -423,6 +485,40 @@ export class Workbook {
     this.sheet(sheet).merges = kept;
   }
 
+  conditionalRules(sheet: string): readonly ConditionalRule[] {
+    return this.byId.get(sheet)?.rules ?? [];
+  }
+
+  setConditionalRules(sheet: string, rules: ConditionalRule[]) {
+    this.sheet(sheet).rules = rules.map((r) => ({ ...r }));
+  }
+
+  validations(sheet: string): readonly ValidationRule[] {
+    return this.byId.get(sheet)?.validations ?? [];
+  }
+
+  /** The dropdown rule for a cell; the last matching rule wins, as it was added most recently. */
+  validationAt(sheet: string, row: number, col: number): ValidationRule | undefined {
+    const rules = this.validations(sheet);
+    for (let i = rules.length - 1; i >= 0; i--) {
+      const r = rules[i].range;
+      if (row >= r.r0 && row <= r.r1 && col >= r.c0 && col <= r.c1) return rules[i];
+    }
+    return undefined;
+  }
+
+  setValidations(sheet: string, rules: ValidationRule[]) {
+    this.sheet(sheet).validations = rules.map((r) => ({ ...r }));
+  }
+
+  charts(sheet: string): readonly ChartSpec[] {
+    return this.byId.get(sheet)?.charts ?? [];
+  }
+
+  setCharts(sheet: string, charts: ChartSpec[]) {
+    this.sheet(sheet).charts = charts.map((c) => ({ ...c }));
+  }
+
   // ---- Structure -------------------------------------------------------------
 
   /** Inserts `count` blank rows or columns before index `at`. */
@@ -473,10 +569,10 @@ export class Workbook {
     if (axis === "row") target.rowHeights = remapSizes(target.rowHeights);
     else target.colWidths = remapSizes(target.colWidths);
 
-    // Merged ranges move, grow or shrink with their rows and columns.
+    // Merged ranges, rules and charts move, grow or shrink with their rows and columns.
     const lo = axis === "row" ? "r0" : "c0";
     const hi = axis === "row" ? "r1" : "c1";
-    target.merges = target.merges.flatMap((m) => {
+    const moveRange = (m: CellRange): CellRange | null => {
       let a = m[lo];
       let b = m[hi];
       if (count > 0) {
@@ -485,11 +581,22 @@ export class Workbook {
       } else {
         a = a < at ? a : a >= end ? a + count : at;
         b = b < at ? b : b >= end ? b + count : at - 1;
-        if (b < a) return [];
+        if (b < a) return null;
       }
-      const moved = { ...m, [lo]: a, [hi]: b };
-      return moved.r0 === moved.r1 && moved.c0 === moved.c1 ? [] : [moved];
+      return { ...m, [lo]: a, [hi]: b };
+    };
+    const moveAll = <T extends { range: CellRange }>(items: T[]) =>
+      items.flatMap((it) => {
+        const range = moveRange(it.range);
+        return range ? [{ ...it, range }] : [];
+      });
+    target.merges = target.merges.flatMap((m) => {
+      const moved = moveRange(m);
+      return moved && (moved.r0 !== moved.r1 || moved.c0 !== moved.c1) ? [moved] : [];
     });
+    target.rules = moveAll(target.rules);
+    target.validations = moveAll(target.validations);
+    target.charts = moveAll(target.charts);
 
     // Rows or columns added or removed inside the frozen area grow or shrink it.
     const key = axis === "row" ? "rows" : "cols";
@@ -542,6 +649,9 @@ export class Workbook {
       rowHeights: new Map(),
       freeze: { rows: 0, cols: 0 },
       merges: [],
+      rules: [],
+      validations: [],
+      charts: [],
     };
     this.list.push(sheet);
     this.byId.set(sheetId, sheet);

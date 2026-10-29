@@ -158,6 +158,8 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
 
   const notes: string[] = [];
   let clipped = false;
+  let conditionalRules = 0;
+  let hasDrawings = false;
   const usedNames = new Set<string>();
   const sheets: SheetJSON[] = [];
 
@@ -243,6 +245,22 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
         return a && b && b.row < limits.maxRows && b.col < limits.maxCols;
       });
 
+    // Dropdown lists: typed choices ("Yes,No") or a range (Lists!$A$1:$A$9).
+    const validations = children(child(ws, "dataValidations"), "dataValidation").flatMap((dv, i) => {
+      if (dv.attrs.type !== "list") return [];
+      const formula = (child(dv, "formula1")?.text ?? "").trim();
+      if (!formula) return [];
+      const strict = dv.attrs.showErrorMessage === "1" && (dv.attrs.errorStyle ?? "stop") === "stop";
+      const quoted = /^"([\s\S]*)"$/.exec(formula);
+      const list = quoted ? { items: quoted[1].replace(/""/g, '"').split(",").map((x) => x.trim()).filter(Boolean) } : { source: formula.replace(/\$/g, "") };
+      return (dv.attrs.sqref ?? "")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((range, j) => ({ id: `v${i}-${j}`, range, strict, ...list }));
+    });
+    conditionalRules += children(ws, "conditionalFormatting").length;
+    if (child(ws, "drawing")) hasDrawings = true;
+
     const pane = child(child(child(ws, "sheetViews"), "sheetView"), "pane");
     const frozen = pane && (pane.attrs.state === "frozen" || pane.attrs.state === "frozenSplit");
     const freeze = frozen
@@ -258,11 +276,16 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
       rowHeights,
       ...(freeze ? { freeze } : {}),
       ...(merges.length ? { merges } : {}),
+      ...(validations.length ? { validations } : {}),
     });
   }
 
   if (sheets.length === 0) throw new Error("This workbook has no sheets Kexcel can open.");
 
+  if (conditionalRules) {
+    notes.push(`${conditionalRules} conditional formatting rule${conditionalRules === 1 ? " wasn't" : "s weren't"} brought over; add them again with Format > Conditional formatting.`);
+  }
+  if (hasDrawings) notes.push("Charts and pictures in the file weren't brought over.");
   if (clipped) notes.push(`Only the first ${limits.maxRows.toLocaleString()} rows and ${limits.maxCols} columns of each sheet were imported.`);
 
   // Formulas Kexcel can't run yet, such as whole-column ranges or unknown functions.

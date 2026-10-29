@@ -92,4 +92,8 @@ export interface Commands {
   toggleGridlines(): void;
   showShortcuts(): void;
   openAI(tab: AITab): void;
+  openConditional(): void;
+  /** Opens the dropdown list (data validation) editor. */
+  openValidation(): void;
+  insertChart(): void;
 }

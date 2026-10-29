@@ -81,6 +81,7 @@ export const DecimalIncreaseIcon = icon([
 ]);
 export const WrapIcon = icon(["M3 6h18", "M3 12h15a3 3 0 1 1 0 6h-4", "m16 16-2 2 2 2", "M3 18h7"]);
 export const MergeIcon = icon(["M3 4v16", "M21 4v16", "M6 12h5", "m9 9 3 3-3 3", "M18 12h-5", "m15 9-3 3 3 3"]);
+export const ChartIcon = icon(["M3 3v16a2 2 0 0 0 2 2h16", "M18 17V9", "M13 17V5", "M8 17v-3"]);
 export const SearchIcon = icon(["M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z", "m21 21-4.3-4.3"]);
 
 /** A letter with a colour bar underneath, for text and fill colour buttons. */

@@ -3,6 +3,7 @@
 import { colToLetters, formatValue, isError, type Workbook } from "@/lib/engine";
 import type { Range } from "@/lib/sheet-ops";
 import { textStyle } from "@/components/grid/Grid";
+import { lookAt, prepareRules } from "@/lib/conditional";
 import { GridLayout } from "@/components/grid/layout";
 
 export type Paper = "A4" | "Letter";
@@ -46,6 +47,7 @@ function SheetTable({
   options: PrintOptions;
 }) {
   const layout = GridLayout.forSheet(wb, sheet, 1);
+  const rules = prepareRules(wb, sheet);
   const cols = Array.from({ length: range.c1 - range.c0 + 1 }, (_, i) => range.c0 + i);
   const rows = Array.from({ length: range.r1 - range.r0 + 1 }, (_, i) => range.r0 + i);
   const headerWidth = options.headers ? 40 : 0;
@@ -92,7 +94,12 @@ function SheetTable({
               const topLeft = merge && { row: Math.max(merge.r0, range.r0), col: Math.max(merge.c0, range.c0) };
               if (topLeft && (topLeft.row !== r || topLeft.col !== c)) return null;
               const value = merge ? wb.getValue(sheet, merge.r0, merge.c0) : wb.getValue(sheet, r, c);
-              const f = merge ? wb.getFormat(sheet, merge.r0, merge.c0) : wb.getFormat(sheet, r, c);
+              const own = merge ? wb.getFormat(sheet, merge.r0, merge.c0) : wb.getFormat(sheet, r, c);
+              // Conditional formatting prints too (data bars aside).
+              const look = rules.length ? lookAt(rules, value, merge?.r0 ?? r, merge?.c0 ?? c) : null;
+              const f = look
+                ? { ...own, fill: look.fill ?? own?.fill, color: look.color ?? own?.color, bold: look.bold || own?.bold }
+                : own;
               const b = f?.borders;
               const line = "1px solid #000";
               const align =

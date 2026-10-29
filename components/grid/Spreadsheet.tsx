@@ -5,6 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import AIPanel, { type AITab } from "@/components/ai/AIPanel";
+import ChartFrame from "@/components/charts/ChartFrame";
+import ChartPanel from "@/components/panels/ChartPanel";
+import ConditionalPanel from "@/components/panels/ConditionalPanel";
+import ValidationPanel from "@/components/panels/ValidationPanel";
+import { chartData } from "@/lib/charts";
+import { lookAt, prepareRules } from "@/lib/conditional";
+import { isAllowed, listItems } from "@/lib/validation";
 import PrintDialog, { loadOptions, type PrintScope } from "@/components/print/PrintDialog";
 import PrintView, { type PrintJob, type PrintOptions } from "@/components/print/PrintView";
 import MenuBar from "@/components/toolbar/MenuBar";
@@ -28,6 +35,8 @@ import {
   type CellFormat,
   type CellPatch,
   type CellRange,
+  type ChartSpec,
+  rangeToName,
   type WorkbookJSON,
 } from "@/lib/engine";
 import { fillPatches, sortPatches, type Range } from "@/lib/sheet-ops";
@@ -38,6 +47,7 @@ import { parseCSV, parseTSV, toCSV, toTSV } from "@/lib/tsv";
 import { COL_COUNT, DEFAULT_COL_WIDTH, MIN_COL_WIDTH, ROW_COUNT } from "./constants";
 import CellContextMenu from "./CellContextMenu";
 import FindBar from "./FindBar";
+import ValidationList from "./ValidationList";
 import Grid, { inRange, rangeOf } from "./Grid";
 import { GridLayout, ptToPx } from "./layout";
 import type { Commands, Editing, EditorState, Selection, ToggleKey } from "./types";
@@ -104,7 +114,16 @@ function Spreadsheet({ docId }: { docId: string }) {
   const [nameBox, setNameBox] = useState<string | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [printJob, setPrintJob] = useState<PrintJob | null>(null);
-  const [aiTab, setAiTab] = useState<AITab | null>(null);
+  // The side panel: the AI assistant, or one of the rule and chart editors.
+  const [panel, setPanel] = useState<
+    | { kind: "ai"; tab: AITab }
+    | { kind: "conditional" }
+    | { kind: "validation" }
+    | { kind: "chart"; id: string }
+    | null
+  >(null);
+  const [selectedChart, setSelectedChart] = useState<string | null>(null);
+  const [listMenu, setListMenu] = useState<{ anchor: DOMRect; row: number; col: number } | null>(null);
 
   const dirtyRef = useRef(false);
   const historyRef = useRef<{ undo: HistoryEntry[]; redo: HistoryEntry[] }>({ undo: [], redo: [] });
@@ -342,6 +361,11 @@ function Spreadsheet({ docId }: { docId: string }) {
 
   const commitEdit = (move?: [number, number]) => {
     if (!editing) return;
+    const rule = wb.validationAt(activeSheet, editing.row, editing.col);
+    if (rule?.strict && !isAllowed(listItems(wb, activeSheet, rule), editing.value)) {
+      setToast(`"${editing.value.trim()}" isn't one of this cell's choices. Pick from the list or press Escape.`);
+      return;
+    }
     commitPatches([withImpliedFormat({ sheet: activeSheet, row: editing.row, col: editing.col, raw: editing.value })]);
     setEditing(null);
     if (move) {
@@ -881,6 +905,9 @@ function Spreadsheet({ docId }: { docId: string }) {
     exportXlsx: () => {
       try {
         download(writeXlsx(wb) as BlobPart, XLSX_MIME, `${title || "Spreadsheet"}.xlsx`);
+        if (wb.sheets.some((s) => wb.charts(s.id).length || wb.conditionalRules(s.id).length)) {
+          setToast("Downloaded. Charts and conditional formatting stay in Kexcel; Excel files don't include them yet.");
+        }
       } catch (e) {
         console.error(e);
         setToast("Couldn't create the Excel file.");
@@ -912,7 +939,42 @@ function Spreadsheet({ docId }: { docId: string }) {
     showShortcuts: () => setShortcutsOpen(true),
     openAI: (tab) => {
       if (editing) commitEdit();
-      setAiTab(tab);
+      setPanel({ kind: "ai", tab });
+    },
+    openConditional: () => {
+      if (editing) commitEdit();
+      setPanel({ kind: "conditional" });
+    },
+    openValidation: () => {
+      if (editing) commitEdit();
+      setPanel({ kind: "validation" });
+    },
+    insertChart: () => {
+      if (editing) commitEdit();
+      const used = wb.usedBounds(activeSheet);
+      const multi = range.r1 > range.r0 || range.c1 > range.c0;
+      if (!multi && !used) {
+        setToast("Type some numbers first, then select them and insert a chart.");
+        return;
+      }
+      const source: CellRange = multi
+        ? { ...range, r1: Math.min(range.r1, (used?.rows ?? 1) - 1), c1: Math.min(range.c1, (used?.cols ?? 1) - 1) }
+        : { r0: 0, r1: used!.rows - 1, c0: 0, c1: used!.cols - 1 };
+      const data = chartData(wb, activeSheet, source);
+      const chart: ChartSpec = {
+        id: newSheetId(),
+        // Many points read better as a line; a few as columns.
+        type: data.categories.length > 12 ? "line" : "column",
+        range: source,
+        title: data.series.length === 1 ? data.series[0].name : "Chart",
+        x: Math.round(layout.colLeft(source.c1 + 1) / zoom) + 16,
+        y: Math.round(layout.rowTop(source.r0) / zoom),
+        width: 480,
+        height: 300,
+      };
+      structural(() => wb.setCharts(activeSheet, [...wb.charts(activeSheet), chart]));
+      setSelectedChart(chart.id);
+      setPanel({ kind: "chart", id: chart.id });
     },
   };
 
@@ -957,6 +1019,20 @@ function Spreadsheet({ docId }: { docId: string }) {
 
   const onGridKeyDown = (e: React.KeyboardEvent) => {
     if (editing) return;
+    if (selectedChart && (e.key === "Delete" || e.key === "Backspace")) {
+      e.preventDefault();
+      deleteChart(selectedChart);
+      return;
+    }
+    if (selectedChart && e.key === "Escape") {
+      setSelectedChart(null);
+      return;
+    }
+    if (e.altKey && e.key === "ArrowDown" && wb.validationAt(activeSheet, active.row, active.col)) {
+      e.preventDefault();
+      openList();
+      return;
+    }
     const ctrl = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
 
@@ -1040,6 +1116,39 @@ function Spreadsheet({ docId }: { docId: string }) {
   };
 
   // ---- Derived view data ---------------------------------------------------------
+
+  // ---- Rules, lists and charts ----------------------------------------------
+
+  const preparedRules = useMemo(() => {
+    void version; // the figures depend on the cell values
+    return prepareRules(wb, activeSheet);
+  }, [wb, activeSheet, version]);
+
+  /** Dropdown choices per rule, worked out once per change. */
+  const listChoices = useMemo(() => {
+    void version; // choices from a range change with its cells
+    return new Map(wb.validations(activeSheet).map((rule) => [rule.id, listItems(wb, activeSheet, rule)]));
+  }, [wb, activeSheet, version]);
+  const choicesFor = (row: number, col: number) => {
+    const rule = wb.validationAt(activeSheet, row, col);
+    return rule ? (listChoices.get(rule.id) ?? []) : null;
+  };
+  const panelChart = panel?.kind === "chart" ? wb.charts(activeSheet).find((c) => c.id === panel.id) : undefined;
+
+  const openList = () => {
+    const button = scrollRef.current?.querySelector<HTMLElement>("[data-list-button]");
+    if (button) setListMenu({ anchor: button.getBoundingClientRect(), row: active.row, col: active.col });
+  };
+
+  const updateChart = (id: string, patch: Partial<ChartSpec>) =>
+    structural(() => wb.setCharts(activeSheet, wb.charts(activeSheet).map((c) => (c.id === id ? { ...c, ...patch } : c))));
+
+  const deleteChart = (id: string) => {
+    structural(() => wb.setCharts(activeSheet, wb.charts(activeSheet).filter((c) => c.id !== id)));
+    setSelectedChart(null);
+    if (panel?.kind === "chart" && panel.id === id) setPanel(null);
+    focusGrid();
+  };
 
   const stats = useMemo(() => {
     void version; // recompute after every edit
@@ -1184,7 +1293,37 @@ function Spreadsheet({ docId }: { docId: string }) {
           onPointerStart={() => {
             if (editing) commitEdit();
             setMenu(null);
+            setSelectedChart(null);
           }}
+          look={(row, col, value) => (preparedRules.length ? lookAt(preparedRules, value, row, col) : null)}
+          invalid={(row, col) => {
+            const items = choicesFor(row, col);
+            if (!items) return false;
+            const raw = wb.getRaw(activeSheet, row, col);
+            const shown = raw.startsWith("=")
+              ? formatValue(wb.getValue(activeSheet, row, col), wb.getFormat(activeSheet, row, col))
+              : raw.replace(/^'/, "");
+            return !isAllowed(items, shown);
+          }}
+          hasList={(row, col) => !!wb.validationAt(activeSheet, row, col)}
+          onOpenList={(anchor) => setListMenu({ anchor, row: active.row, col: active.col })}
+          objects={wb.charts(activeSheet).map((chart) => (
+            <ChartFrame
+              key={chart.id}
+              chart={chart}
+              data={chartData(wb, activeSheet, chart.range)}
+              zoom={zoom}
+              selected={selectedChart === chart.id}
+              onSelect={() => {
+                if (editing) commitEdit();
+                setSelectedChart(chart.id);
+                focusGrid();
+              }}
+              onChange={(patch) => updateChart(chart.id, patch)}
+              onEdit={() => setPanel({ kind: "chart", id: chart.id })}
+              onDelete={() => deleteChart(chart.id)}
+            />
+          ))}
           onEdit={() => startEditing("edit")}
           onEditorChange={(value) => editing && setEditing({ ...editing, value })}
           onEditorKeyDown={onEditorKeyDown}
@@ -1222,17 +1361,53 @@ function Spreadsheet({ docId }: { docId: string }) {
           />
         )}
       </div>
-      {aiTab && (
+      {panel?.kind === "conditional" && (
+        <ConditionalPanel
+          rules={wb.conditionalRules(activeSheet)}
+          selection={rangeToName(range)}
+          onChange={(rules) => structural(() => wb.setConditionalRules(activeSheet, rules))}
+          onClose={() => {
+            setPanel(null);
+            focusGrid();
+          }}
+        />
+      )}
+      {panel?.kind === "validation" && (
+        <ValidationPanel
+          wb={wb}
+          sheet={activeSheet}
+          rules={wb.validations(activeSheet)}
+          selection={rangeToName(range)}
+          onChange={(rules) => structural(() => wb.setValidations(activeSheet, rules))}
+          onClose={() => {
+            setPanel(null);
+            focusGrid();
+          }}
+        />
+      )}
+      {panelChart && (
+        <ChartPanel
+          key={panelChart.id}
+          chart={panelChart}
+          onChange={(patch) => updateChart(panelChart.id, patch)}
+          onDelete={() => deleteChart(panelChart.id)}
+          onClose={() => {
+            setPanel(null);
+            focusGrid();
+          }}
+        />
+      )}
+      {panel?.kind === "ai" && (
         <AIPanel
           wb={wb}
           sheet={activeSheet}
           version={version}
           selection={range}
           active={active}
-          tab={aiTab}
-          onTab={setAiTab}
+          tab={panel.tab}
+          onTab={(tab) => setPanel({ kind: "ai", tab })}
           onClose={() => {
-            setAiTab(null);
+            setPanel(null);
             focusGrid();
           }}
           onInsert={(cell, raw) => {
@@ -1268,6 +1443,22 @@ function Spreadsheet({ docId }: { docId: string }) {
           onPrint={startPrint}
           onClose={() => {
             setPrintOpen(false);
+            focusGrid();
+          }}
+        />
+      )}
+      {listMenu && (
+        <ValidationList
+          anchor={listMenu.anchor}
+          items={choicesFor(listMenu.row, listMenu.col) ?? []}
+          current={wb.getRaw(activeSheet, listMenu.row, listMenu.col)}
+          onPick={(item) => {
+            commitPatches([withImpliedFormat({ sheet: activeSheet, row: listMenu.row, col: listMenu.col, raw: item })]);
+            setListMenu(null);
+            focusGrid();
+          }}
+          onClose={() => {
+            setListMenu(null);
             focusGrid();
           }}
         />

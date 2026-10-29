@@ -11,8 +11,10 @@ import {
   type Scalar,
   type Workbook,
 } from "@/lib/engine";
+import type { Look } from "@/lib/conditional";
 import type { Range } from "@/lib/sheet-ops";
 import { COL_COUNT, MIN_COL_WIDTH, OVERSCAN, ROW_COUNT, ROW_HEIGHT } from "./constants";
+import { ChevronDown } from "@/components/ui/icons";
 import { ptToPx, WRAP_LINE_HEIGHT, type GridLayout } from "./layout";
 import type { Editing, Selection } from "./types";
 
@@ -78,6 +80,16 @@ export interface GridProps {
   onAutoFitCol: (col: number) => void;
   onFill: (src: Range, dst: Range) => void;
   onContextMenu: (x: number, y: number, target: "cell" | "row" | "col") => void;
+  /** Conditional formatting for a cell, if any applies. */
+  look: (row: number, col: number, value: Scalar) => Look | null;
+  /** Whether a cell holds a value its dropdown list doesn't offer. */
+  invalid: (row: number, col: number) => boolean;
+  /** Whether a cell has a dropdown list. */
+  hasList: (row: number, col: number) => boolean;
+  /** Opens the dropdown list under the given button. */
+  onOpenList: (anchor: DOMRect) => void;
+  /** Charts and other things floating over the cells. */
+  objects?: React.ReactNode;
 }
 
 export default function Grid(props: GridProps) {
@@ -319,6 +331,44 @@ export default function Grid(props: GridProps) {
     );
   };
 
+  /** A cell's format with conditional formatting laid over it. */
+  const withLook = (format: CellFormat | undefined, look: Look | null): CellFormat | undefined =>
+    look
+      ? { ...format, fill: look.fill ?? format?.fill, color: look.color ?? format?.color, bold: look.bold || format?.bold }
+      : format;
+
+  /** A data bar: a tint of the first series colour, as long as the value's share of the range. */
+  const dataBar = (key: string, fraction: number, left: number, top: number, width: number, height: number) => (
+    <div
+      key={key}
+      className="absolute rounded-r-[3px]"
+      style={{
+        left: left + 1,
+        top: top + 3 * z,
+        width: Math.max(0, (width - 3) * fraction),
+        height: Math.max(0, height - 7 * z),
+        background: "color-mix(in oklab, var(--series-1) 35%, transparent)",
+      }}
+    />
+  );
+
+  /** A small corner flag on cells whose value isn't in their dropdown list. */
+  const invalidMark = (key: string, right: number, top: number) => (
+    <div
+      key={key}
+      className="pointer-events-none absolute"
+      title="This value isn't in the cell's list"
+      style={{
+        left: right - 7,
+        top,
+        width: 0,
+        height: 0,
+        borderTop: "6px solid var(--error)",
+        borderLeft: "6px solid transparent",
+      }}
+    />
+  );
+
   /** Fills, borders, gridlines and text for a block of cells, with merged ranges drawn as one cell. */
   const renderCells = (r0: number, r1: number, c0: number, c1: number): React.ReactNode[] => {
     const fills: React.ReactNode[] = [];
@@ -335,17 +385,23 @@ export default function Grid(props: GridProps) {
       const height = layout.rowHeight(row);
       for (let col = c0; col <= c1; col++) {
         if (merges.length && covered(row, col)) continue;
-        const format = wb.getFormat(sheet, row, col);
+        const value = wb.getValue(sheet, row, col);
+        const look = props.look(row, col, value);
+        const format = withLook(wb.getFormat(sheet, row, col), look);
         const left = layout.colLeft(col);
         const width = layout.colWidth(col);
         fills.push(cellFill(`f${row},${col}`, format, left, top, width, height));
-        texts.push(cellText(`t${row},${col}`, wb.getValue(sheet, row, col), format, left, top, width, height, c1));
+        if (look?.bar) fills.push(dataBar(`b${row},${col}`, look.bar, left, top, width, height));
+        if (value !== null && props.invalid(row, col)) texts.push(invalidMark(`i${row},${col}`, left + width, top));
+        texts.push(cellText(`t${row},${col}`, value, format, left, top, width, height, c1));
       }
     }
 
     for (const m of merges) {
       // The top-left cell's content and look fill the whole range; a cover hides the gridlines inside it.
-      const format = wb.getFormat(sheet, m.r0, m.c0);
+      const value = wb.getValue(sheet, m.r0, m.c0);
+      const look = props.look(m.r0, m.c0, value);
+      const format = withLook(wb.getFormat(sheet, m.r0, m.c0), look);
       const left = layout.colLeft(m.c0);
       const top = layout.rowTop(m.r0);
       const width = layout.colLeft(m.c1 + 1) - left;
@@ -359,7 +415,8 @@ export default function Grid(props: GridProps) {
         />,
       );
       covers.push(cellFill(`mf${key}`, format?.borders ? { borders: format.borders } : undefined, left, top, width, height));
-      texts.push(cellText(`mt${key}`, wb.getValue(sheet, m.r0, m.c0), format, left, top, width, height, m.c1));
+      if (look?.bar) covers.push(dataBar(`mb${key}`, look.bar, left, top, width, height));
+      texts.push(cellText(`mt${key}`, value, format, left, top, width, height, m.c1));
     }
 
     if (gridlines) {
@@ -417,6 +474,23 @@ export default function Grid(props: GridProps) {
         className="pointer-events-none absolute border-2 border-[var(--accent)]"
         style={cellBox(active.row, active.col)}
       />
+      {!editing && props.hasList(active.row, active.col) && layerOf(active.row, active.col) === layer && (
+        <button
+          type="button"
+          data-list-button=""
+          aria-label="Show the list for this cell"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => props.onOpenList(e.currentTarget.getBoundingClientRect())}
+          className="absolute z-[6] grid place-items-center rounded-sm bg-[var(--bg)] text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--fg)]"
+          style={(() => {
+            const b = cellBox(active.row, active.col);
+            const size = Math.min(18 * z, b.height - 4);
+            return { left: b.left + b.width - size - 2, top: b.top + (b.height - size) / 2, width: size, height: size };
+          })()}
+        >
+          <ChevronDown size={Math.round(13 * z)} />
+        </button>
+      )}
       {fillPreview && (
         <div className="pointer-events-none absolute border-2 border-dashed border-[var(--accent)]" style={box(fillPreview)} />
       )}
@@ -627,6 +701,7 @@ export default function Grid(props: GridProps) {
           >
             {renderCells(rowStart, rowEnd, colStart, colEnd)}
             {overlays("main")}
+            {props.objects}
           </div>
         </div>
       </div>

@@ -6,6 +6,7 @@ import {
   isError,
   isFormula,
   parseKey,
+  rangeToName,
   type CellFormat,
   type Workbook,
 } from "@/lib/engine";
@@ -212,13 +213,27 @@ function sheetXml(wb: Workbook, sheet: string, styles: StyleTable): string {
         .join("")}</mergeCells>`
     : "";
 
+  const rules = wb.validations(sheet);
+  const validationXml = rules.length
+    ? `<dataValidations count="${rules.length}">${rules
+        .map((v) => {
+          const formula = v.source ?? `"${(v.items ?? []).join(",").replace(/"/g, '""')}"`;
+          return (
+            `<dataValidation type="list" allowBlank="1" showDropDown="0" showErrorMessage="${v.strict ? 1 : 0}"` +
+            ` errorStyle="${v.strict ? "stop" : "information"}" sqref="${rangeToName(v.range)}">` +
+            `<formula1>${escapeXml(formula)}</formula1></dataValidation>`
+          );
+        })
+        .join("")}</dataValidations>`
+    : "";
+
   const used = wb.usedBounds(sheet);
   const dimension = used ? `A1:${colToLetters(used.cols - 1)}${used.rows}` : "A1";
   return (
     XML_HEAD +
     `<worksheet xmlns="${NS_MAIN}" xmlns:r="${NS_REL}">` +
     `<dimension ref="${dimension}"/>${views}<sheetFormatPr defaultRowHeight="18"/>${cols}` +
-    `<sheetData>${rowXml}</sheetData>${mergeXml}</worksheet>`
+    `<sheetData>${rowXml}</sheetData>${mergeXml}${validationXml}</worksheet>`
   );
 }
 

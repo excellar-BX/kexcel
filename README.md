@@ -28,6 +28,9 @@ To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tie
 - Copy, cut and paste with formulas and formats, also to and from Excel and Google Sheets
 - Undo and redo for edits, formatting, structure and tab changes
 - Open and download Excel files (.xlsx) with values, formulas, formatting, column widths, row heights and frozen panes; CSV import and export
+- Charts (column, bar, line, area, pie) drawn from a range, movable and resizable, with hover details
+- Conditional formatting: highlight rules, colour scales and data bars (Format > Conditional formatting)
+- Dropdown lists in cells from typed choices or a range, rejecting or flagging other values (Data > Dropdown lists)
 - Freeze rows and columns (View > Freeze); merge cells; wrap text (Alt+Enter adds a line in a cell)
 - Dates and times as real values: type 2025-01-15, 15 Jan 2025 or 14:30; date formats; TODAY, NOW, DATE, TIME, YEAR, MONTH, DAY, WEEKDAY, EDATE, EOMONTH, DAYS, DATEDIF, NETWORKDAYS, DATEVALUE
 - Print with page, scale, gridline and header options
@@ -52,6 +55,9 @@ lib/engine/             Formula engine in plain TypeScript, no React
   format.ts             Cell formats and number display
   dates.ts              Date serial numbers, parsing and display
 lib/sheet-ops.ts        Fill and sort
+lib/charts.ts           Chart data from ranges, axis ticks
+lib/conditional.ts      Conditional formatting rules
+lib/validation.ts       Dropdown list rules
 lib/storage.ts          localStorage persistence
 lib/tsv.ts              Clipboard (TSV) and CSV
 lib/xlsx/               Excel .xlsx reader and writer (no network, runs in the browser)
@@ -60,7 +66,7 @@ lib/ai/                 AI assistant prompts and provider adapters (server only)
 
 ## Roadmap
 
-1. Charts, conditional formatting, data validation (dropdown lists)
+1. Charts and conditional formatting in .xlsx files, pivot tables, comments
 2. AI: write formulas from plain English, explain formulas, find errors, ask questions of a sheet
 3. Accounts, cloud save, sharing, charts, mobile polish
 4. Templates for small businesses

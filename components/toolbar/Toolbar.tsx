@@ -7,6 +7,7 @@ import {
   AlignLeftIcon,
   AlignRightIcon,
   BorderIcon,
+  ChartIcon,
   ChevronDown,
   ColorBarIcon,
   DecimalDecreaseIcon,
@@ -332,6 +333,9 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
         label={<span className="text-[16px]">Σ</span>}
         items={QUICK_FUNCTIONS.map((fn) => ({ label: fn, onSelect: () => c.insertFunction(fn) }))}
       />
+      <Button label="Insert chart" onClick={c.insertChart}>
+        <ChartIcon size={17} />
+      </Button>
       <Divider />
       <Button label="AI assistant: write, explain and check formulas" onClick={() => c.openAI("formula")} wide>
         <SparklesIcon size={16} className="text-[var(--accent)]" />

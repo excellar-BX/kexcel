@@ -157,6 +157,7 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
       items: [
         ...insertDeleteItems(c).slice(0, 4),
         { type: "separator" },
+        { label: "Chart", onSelect: c.insertChart },
         { label: "Sheet", onSelect: c.addSheet },
         { label: "Function", items: FUNCTIONS.map((f) => ({ label: f, onSelect: () => c.insertFunction(f) })) },
       ],
@@ -188,6 +189,7 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
             onSelect: () => c.applyFormat({ align: a }),
           })),
         },
+        { label: "Conditional formatting…", onSelect: c.openConditional },
         { label: "Wrap text", checked: !!s.format.wrap, onSelect: () => c.toggle("wrap") },
         s.merged
           ? { label: "Unmerge cells", onSelect: c.unmergeCells }
@@ -201,6 +203,8 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
       items: [
         { label: "Sort range A to Z", onSelect: () => c.sort(true) },
         { label: "Sort range Z to A", onSelect: () => c.sort(false) },
+        { type: "separator" },
+        { label: "Dropdown lists…", onSelect: c.openValidation },
       ],
     },
     {
