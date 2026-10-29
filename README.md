@@ -14,6 +14,7 @@ npm test        # formula engine tests
 
 Sign in (top right) and spreadsheets are saved to your account as you type, so they open on any device. Kexcel still keeps a copy in the browser, so it works offline and catches up when the connection returns. If a spreadsheet changed on two devices before syncing, Kexcel asks which version to keep instead of overwriting one.
 
+- Share a spreadsheet (Share button, owners only) with other accounts as Can view or Can edit, or let anyone with the link view it. Open shared spreadsheets pick up other people's saves every few seconds; view-only copies can't be changed.
 - Accounts and spreadsheets live in a SQLite file at `data/kexcel.db` (Node's built-in `node:sqlite`; set `KEXCEL_DB_PATH` to move it). It is git-ignored; back it up.
 - Passwords are hashed with scrypt; sessions are random tokens stored only as hashes, in an httpOnly cookie. Requests that change data must come from Kexcel's own pages.
 - To deploy, use a host with a persistent disk, or swap `lib/server/db.ts` and `lib/server/workbooks.ts` for Postgres. Serverless hosts without a disk will lose the database.
@@ -80,5 +81,5 @@ lib/ai/                 AI assistant prompts and provider adapters (server only)
 
 1. Charts, conditional formatting and comments in .xlsx files
 2. Password reset by email
-3. Sharing and editing together
+3. Live editing together (see each other's cursors and changes instantly)
 4. Templates for small businesses

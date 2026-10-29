@@ -1,19 +1,25 @@
 import type { WorkbookJSON } from "@/lib/engine";
 import { currentUser, sameOrigin } from "@/lib/server/auth";
 import { fail, json, readJson } from "@/lib/server/http";
-import { deleteWorkbook, getWorkbook, MAX_WORKBOOK_BYTES, saveWorkbook } from "@/lib/server/workbooks";
+import { deleteWorkbook, getWorkbook, MAX_WORKBOOK_BYTES, saveWorkbook, workbookVersion } from "@/lib/server/workbooks";
 
 type Context = { params: Promise<{ id: string }> };
 
 const VALID_ID = /^[A-Za-z0-9_-]{4,64}$/;
 
-export async function GET(_request: Request, { params }: Context) {
+/** The spreadsheet, for its owner, people it's shared with, or anyone if link viewing is on. ?version=1 returns just the version. */
+export async function GET(request: Request, { params }: Context) {
   const user = await currentUser();
-  if (!user) return fail("Sign in to open this spreadsheet.", 401);
   const { id } = await params;
-  const result = getWorkbook(user.id, id);
+  if (new URL(request.url).searchParams.get("version")) {
+    const version = workbookVersion(user?.id ?? null, id);
+    return version === null ? fail("Not found.", 404) : json({ version });
+  }
+  const result = getWorkbook(user?.id ?? null, id);
   if ("missing" in result) return fail("There's no spreadsheet with that link.", 404);
-  if ("forbidden" in result) return fail("This spreadsheet belongs to another account.", 403);
+  if ("forbidden" in result) {
+    return user ? fail("You don't have access to this spreadsheet. Ask its owner to share it with you.", 403) : fail("Sign in to open this spreadsheet.", 401);
+  }
   return json(result.found);
 }
 
@@ -39,10 +45,10 @@ export async function PUT(request: Request, { params }: Context) {
     { workbook: body.workbook, activeSheet: body.activeSheet },
     body.baseVersion ?? null,
   );
-  if ("forbidden" in result) return fail("This spreadsheet belongs to another account.", 403);
+  if ("forbidden" in result) return fail("You can view this spreadsheet but not change it.", 403);
   if ("tooLarge" in result) return fail("This spreadsheet is too large to save to your account.", 413);
   if ("conflict" in result) return json({ conflict: result.conflict }, 409);
-  return json({ version: result.saved.version, updatedAt: result.saved.updatedAt });
+  return json(result.saved);
 }
 
 export async function DELETE(request: Request, { params }: Context) {
@@ -50,5 +56,5 @@ export async function DELETE(request: Request, { params }: Context) {
   const user = await currentUser();
   if (!user) return fail("Sign in first.", 401);
   const { id } = await params;
-  return deleteWorkbook(user.id, id) ? json({ ok: true }) : fail("There's no spreadsheet with that link.", 404);
+  return deleteWorkbook(user.id, id) ? json({ ok: true }) : fail("Only the owner can delete this spreadsheet.", 403);
 }

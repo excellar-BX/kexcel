@@ -7,6 +7,9 @@ export interface Account {
   name: string;
 }
 
+/** What someone may do with a spreadsheet: everything, edit it, or only look. */
+export type Role = "owner" | "edit" | "view";
+
 export interface CloudWorkbook {
   id: string;
   title: string;
@@ -14,6 +17,8 @@ export interface CloudWorkbook {
   activeSheet?: string;
   version: number;
   updatedAt: number;
+  role: Role;
+  ownerName: string;
 }
 
 export interface CloudSummary {
@@ -21,6 +26,15 @@ export interface CloudSummary {
   title: string;
   version: number;
   updatedAt: number;
+  role: Role;
+  ownerName: string;
+}
+
+export interface Share {
+  userId: string;
+  email: string;
+  name: string;
+  role: "view" | "edit";
 }
 
 /** A request that failed: `offline` means the server couldn't be reached at all. */
@@ -84,6 +98,29 @@ export const pushCloud = (
     method: "PUT",
     body: JSON.stringify({ ...doc, baseVersion }),
   });
+
+/** The account copy's version, or null when it's gone or no longer shared. */
+export async function fetchCloudVersion(id: string): Promise<number | null> {
+  try {
+    return (await call<{ version: number }>(`/api/workbooks/${encodeURIComponent(id)}?version=1`)).version;
+  } catch (e) {
+    if (e instanceof CloudError && !e.offline) return null;
+    throw e;
+  }
+}
+
+const sharingPath = (id: string) => `/api/workbooks/${encodeURIComponent(id)}/sharing`;
+
+export const getSharing = (id: string) => call<{ shares: Share[]; linkAccess: "none" | "view" }>(sharingPath(id));
+
+export const shareWith = (id: string, email: string, role: "view" | "edit") =>
+  call<{ ok: true }>(sharingPath(id), { method: "POST", body: JSON.stringify({ email, role }) });
+
+export const unshare = (id: string, userId: string) =>
+  call<{ ok: true }>(sharingPath(id), { method: "POST", body: JSON.stringify({ remove: userId }) });
+
+export const setLinkAccess = (id: string, linkAccess: "none" | "view") =>
+  call<{ ok: true }>(sharingPath(id), { method: "POST", body: JSON.stringify({ linkAccess }) });
 
 export const deleteCloud = (id: string) => call<{ ok: true }>(`/api/workbooks/${encodeURIComponent(id)}`, { method: "DELETE" });
 

@@ -11,7 +11,7 @@ export interface SavedSheet {
   /** The tab that was open last. */
   activeSheet?: string;
   /** Set when this copy belongs to an account: the version it was last synced to, and whether it has changed since. */
-  cloud?: { owner: string; version: number; synced: boolean };
+  cloud?: { owner: string; version: number; synced: boolean; role?: "owner" | "edit" | "view" };
   updatedAt: number;
 }
 
@@ -19,6 +19,8 @@ export interface SheetSummary {
   id: string;
   title: string;
   updatedAt: number;
+  /** For copies of account spreadsheets: this person's access. */
+  role?: "owner" | "edit" | "view";
 }
 
 /** The first saved format held one sheet's cells and widths at the top level. */
@@ -75,7 +77,7 @@ export function listSheets(): SheetSummary[] {
       if (!key?.startsWith(PREFIX)) continue;
       const id = key.slice(PREFIX.length);
       const data = loadSheet(id);
-      if (data) out.push({ id, title: data.title, updatedAt: data.updatedAt });
+      if (data) out.push({ id, title: data.title, updatedAt: data.updatedAt, role: data.cloud?.role });
     }
   } catch {
     return [];

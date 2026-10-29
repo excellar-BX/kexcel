@@ -36,7 +36,7 @@ describe("opening a spreadsheet while signed in", async () => {
   it("uses this device's copy when the account doesn't have it yet", async () => {
     saveSheet("doc1", { title: "Mine", workbook: book("1") });
     fetchCloud.mockResolvedValue(null);
-    expect(await openFromCloud("doc1", "u1")).toEqual({ kind: "ready" });
+    expect(await openFromCloud("doc1", "u1")).toEqual({ kind: "ready", role: null });
     expect(loadSheet("doc1")?.title).toBe("Mine");
   });
 
@@ -74,7 +74,7 @@ describe("opening a spreadsheet while signed in", async () => {
   it("opens this device's copy when offline", async () => {
     saveSheet("doc1", { title: "Offline", workbook: book("1") });
     fetchCloud.mockRejectedValue(new CloudError("offline", 0, true));
-    expect(await openFromCloud("doc1", "u1")).toEqual({ kind: "ready" });
+    expect(await openFromCloud("doc1", "u1")).toEqual({ kind: "ready", role: null });
   });
 });
 
@@ -105,6 +105,37 @@ describe("saving to an account", async () => {
     expect(store.listWorkbooks("bob")).toEqual([]);
     expect(store.deleteWorkbook("alice", "wb1")).toBe(true);
     expect(store.getWorkbook("alice", "wb1")).toEqual({ missing: true });
+  });
+
+  it("lets owners share for viewing or editing, and by link", () => {
+    store.saveWorkbook("alice", "team", "Team budget", data("1"), null);
+    db().prepare("insert into users (id, email, name, password_hash, created_at) values (?, ?, ?, ?, ?)").run("cara", "cara@x.io", "Cara", "x", 0);
+
+    expect(store.shareWith("bob", "team", "cara@x.io", "edit")).toMatchObject({ status: 403 }); // not the owner
+    expect(store.shareWith("alice", "team", "nobody@x.io", "view")).toMatchObject({ status: 404 });
+    expect(store.shareWith("alice", "team", "bob@x.io", "view")).toEqual({ ok: true });
+    expect(store.shareWith("alice", "team", "CARA@x.io", "edit")).toEqual({ ok: true });
+
+    // A viewer can read but not save; an editor can save but not delete or reshare.
+    expect(store.getWorkbook("bob", "team")).toMatchObject({ found: { role: "view", ownerName: "alice" } });
+    expect(store.saveWorkbook("bob", "team", "x", data("bob"), 1)).toEqual({ forbidden: true });
+    expect(store.saveWorkbook("cara", "team", "Team budget", data("cara"), 1)).toMatchObject({ saved: { version: 2 } });
+    expect(store.deleteWorkbook("cara", "team")).toBe(false);
+    expect(store.shareWith("cara", "team", "bob@x.io", "edit")).toMatchObject({ status: 403 });
+    expect(store.listWorkbooks("cara").map((w) => [w.id, w.role])).toEqual([["team", "edit"]]);
+
+    // The link opens it for anyone, read-only, only once the owner turns that on.
+    expect(store.getWorkbook(null, "team")).toEqual({ forbidden: true });
+    store.setLinkAccess("alice", "team", "view");
+    expect(store.getWorkbook(null, "team")).toMatchObject({ found: { role: "view" } });
+    expect(store.workbookVersion(null, "team")).toBe(2);
+
+    // Removing someone takes their access away; the owner sees the current list.
+    store.unshare("alice", "team", "bob");
+    store.setLinkAccess("alice", "team", "none");
+    expect(store.getWorkbook("bob", "team")).toEqual({ forbidden: true });
+    expect(store.sharing("alice", "team")).toMatchObject({ linkAccess: "none", shares: [{ email: "cara@x.io", role: "edit" }] });
+    expect(store.sharing("cara", "team")).toBeNull();
   });
 
   it("refuses spreadsheets that are too large", () => {

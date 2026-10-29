@@ -37,8 +37,11 @@ export default function SheetList() {
   const inCloud = new Set(cloudItems?.map((c) => c.id));
   /** Everything to list: the account's spreadsheets, then any only on this device. */
   const rows = [
-    ...(cloudItems ?? []).map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, where: "account" as const })),
-    ...sheets.filter((s) => !inCloud.has(s.id)).map((s) => ({ ...s, where: "device" as const })),
+    ...(cloudItems ?? []).map((c) => ({ ...c, where: "account" as const })),
+    // Copies of spreadsheets someone shared, kept for offline use, aren't this person's to list.
+    ...sheets
+      .filter((s) => !inCloud.has(s.id) && !(account && s.role && s.role !== "owner"))
+      .map((s) => ({ ...s, role: "owner" as const, ownerName: "", where: "device" as const })),
   ];
 
   const upload = async (id: string) => {
@@ -48,7 +51,10 @@ export default function SheetList() {
       const res = await pushCloud(id, { title: doc.title, workbook: doc.workbook, activeSheet: doc.activeSheet }, null);
       if ("version" in res) {
         saveSheet(id, { ...doc, cloud: { owner: account.id, version: res.version, synced: true } });
-        setCloud((c) => c && { ...c, items: [{ id, title: doc.title, version: res.version, updatedAt: Date.now() }, ...c.items] });
+        setCloud(
+          (c) =>
+            c && { ...c, items: [{ id, title: doc.title, version: res.version, updatedAt: Date.now(), role: "owner", ownerName: account.name }, ...c.items] },
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save it to your account.");
@@ -122,6 +128,11 @@ export default function SheetList() {
                 <Link href={`/sheet/${s.id}`} className="min-w-0 flex-1 truncate font-medium hover:underline">
                   {s.title || "Untitled sheet"}
                 </Link>
+                {s.role !== "owner" && (
+                  <span className="hidden shrink-0 text-xs text-[var(--muted)] sm:inline">
+                    {s.ownerName} shared · {s.role === "edit" ? "Can edit" : "Can view"}
+                  </span>
+                )}
                 {account && s.where === "device" && (
                   <>
                     <span className="hidden shrink-0 text-xs text-[var(--muted)] sm:inline">Only on this device</span>
@@ -134,6 +145,7 @@ export default function SheetList() {
                   </>
                 )}
                 <span className="hidden shrink-0 text-xs text-[var(--muted)] sm:inline">{formatWhen(s.updatedAt)}</span>
+                {s.role === "owner" && (
                 <button
                   onClick={async () => {
                     const where = s.where === "account" ? " from your account" : "";
@@ -155,6 +167,7 @@ export default function SheetList() {
                 >
                   Delete
                 </button>
+                )}
               </li>
             ))}
           </ul>

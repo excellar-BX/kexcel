@@ -7,7 +7,8 @@ import { flushSync } from "react-dom";
 import AIPanel, { type AITab } from "@/components/ai/AIPanel";
 import AccountMenu from "@/components/auth/AccountMenu";
 import { useSession } from "@/components/auth/useSession";
-import { CloudError, pushCloud, type Account, type CloudWorkbook } from "@/lib/cloud";
+import ShareDialog from "@/components/auth/ShareDialog";
+import { CloudError, fetchCloud, fetchCloudVersion, pushCloud, type Account, type CloudWorkbook, type Role } from "@/lib/cloud";
 import { openFromCloud } from "@/lib/sync";
 import ChartFrame from "@/components/charts/ChartFrame";
 import ChartPanel from "@/components/panels/ChartPanel";
@@ -90,35 +91,48 @@ const ARROWS: Record<string, [number, number]> = {
   ArrowRight: [0, 1],
 };
 
-/** Remounts the editor when the URL switches to another document. */
+type Opened =
+  | Awaited<ReturnType<typeof openFromCloud>>
+  /** Signed out, opening a spreadsheet whose link anyone can view. */
+  | { kind: "public"; server: CloudWorkbook };
+
 /**
  * Remounts the editor when the URL switches to another document. Signed in,
- * it first brings this device's copy up to date with the account.
+ * it first brings this device's copy up to date with the account; signed
+ * out, it checks whether the link opens someone's shared spreadsheet.
  */
 export default function SpreadsheetRoute() {
   const { id } = useParams<{ id: string }>();
   const session = useSession();
   const account = session.status === "ready" ? session.account : null;
-  const [opened, setOpened] = useState<{ id: string; owner: string; result: Awaited<ReturnType<typeof openFromCloud>> } | null>(null);
+  const [opened, setOpened] = useState<{ id: string; owner: string; result: Opened } | null>(null);
 
   useEffect(() => {
-    if (!account) return;
+    if (session.status !== "ready") return;
     let live = true;
-    void openFromCloud(id, account.id).then((result) => {
-      if (live) setOpened({ id, owner: account.id, result });
+    const owner = account?.id ?? "";
+    const open: Promise<Opened> = account
+      ? openFromCloud(id, account.id)
+      : fetchCloud(id)
+          .then((server): Opened => (server ? { kind: "public", server } : { kind: "ready", role: null }))
+          // Not shared by link, or offline: open what's on this device.
+          .catch((): Opened => ({ kind: "ready", role: null }));
+    void open.then((result) => {
+      if (live) setOpened({ id, owner, result });
     });
     return () => {
       live = false;
     };
-  }, [id, account]);
+  }, [id, account, session.status]);
 
-  const waiting = session.status === "loading" || (account && (opened?.id !== id || opened.owner !== account.id));
+  const waiting = session.status === "loading" || opened?.id !== id || opened.owner !== (account?.id ?? "");
   if (waiting) return <div className="grid h-dvh place-items-center text-sm text-[var(--muted)]">Opening…</div>;
   if (opened?.result.kind === "forbidden") {
     return (
       <div className="grid h-dvh place-items-center px-4 text-center">
         <div>
-          <p className="font-medium">This spreadsheet belongs to another account.</p>
+          <p className="font-medium">You don&apos;t have access to this spreadsheet.</p>
+          <p className="mt-1 text-sm text-[var(--muted)]">Ask its owner to share it with you.</p>
           <Link href="/" className="mt-2 inline-block text-sm text-[var(--accent)] hover:underline">
             Go to your spreadsheets
           </Link>
@@ -132,6 +146,21 @@ export default function SpreadsheetRoute() {
       docId={id}
       account={account}
       initialConflict={opened?.result.kind === "conflict" ? opened.result.server : null}
+      role={
+        opened?.result.kind === "ready"
+          ? opened.result.role
+          : opened?.result.kind === "conflict" || opened?.result.kind === "public"
+            ? opened.result.server.role
+            : null
+      }
+      ownerName={
+        opened?.result.kind === "ready"
+          ? opened.result.ownerName
+          : opened?.result.kind === "conflict" || opened?.result.kind === "public"
+            ? opened.result.server.ownerName
+            : undefined
+      }
+      seed={opened?.result.kind === "public" ? opened.result.server : undefined}
     />
   );
 }
@@ -142,15 +171,28 @@ function Spreadsheet({
   docId,
   account,
   initialConflict,
+  role,
+  ownerName,
+  seed,
 }: {
   docId: string;
   account: Account | null;
   /** The account's copy, when both it and this device changed since they last matched. */
   initialConflict: CloudWorkbook | null;
+  /** This person's access; null when the spreadsheet isn't in any account yet. */
+  role: Role | null;
+  ownerName?: string;
+  /** A spreadsheet opened from a public link, shown without keeping a copy here. */
+  seed?: CloudWorkbook;
 }) {
+  const readOnly = role === "view";
+  // Shared with others or opened from a link: watch for their changes.
+  const inCloud = role !== null;
   const router = useRouter();
   // Rendered client-only, so reading localStorage while initialising state is safe.
-  const [saved] = useState(() => loadSheet(docId));
+  const [saved] = useState(() =>
+    seed ? { title: seed.title, workbook: seed.workbook, activeSheet: seed.activeSheet, updatedAt: seed.updatedAt } : loadSheet(docId),
+  );
   // The workbook is mutated in place; `version` tells React when to re-render.
   const [wb] = useState(() => (saved ? Workbook.fromJSON(saved.workbook) : Workbook.withSheet()));
   const [version, setVersion] = useState(0);
@@ -170,6 +212,8 @@ function Spreadsheet({
   // The account version this device's copy is based on (null: not in the account yet).
   const cloudVersionRef = useRef<number | null>(saved?.cloud && saved.cloud.owner === account?.id ? saved.cloud.version : null);
   const pushingRef = useRef(false);
+  const unsyncedRef = useRef(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const pushAgainRef = useRef(false);
   const [menu, setMenu] = useState<{ x: number; y: number; target: "cell" | "row" | "col" } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -218,7 +262,7 @@ function Spreadsheet({
       workbook: wb.toJSON(),
       activeSheet,
       ...(account && cloudVersionRef.current !== null
-        ? { cloud: { owner: account.id, version: cloudVersionRef.current, synced } }
+        ? { cloud: { owner: account.id, version: cloudVersionRef.current, synced, role: role ?? "owner" } }
         : account
           ? { cloud: { owner: account.id, version: 0, synced: false } }
           : {}),
@@ -226,7 +270,7 @@ function Spreadsheet({
 
   /** Sends the current copy to the account. One request at a time; changes made meanwhile follow. */
   const pushNow = async () => {
-    if (!account || conflict) return;
+    if (!account || conflict || readOnly) return;
     if (pushingRef.current) {
       pushAgainRef.current = true;
       return;
@@ -240,6 +284,7 @@ function Spreadsheet({
         setCloudStatus("conflict");
       } else {
         cloudVersionRef.current = res.version;
+        unsyncedRef.current = false;
         saveLocal(true);
         setCloudStatus("saved");
       }
@@ -255,6 +300,62 @@ function Spreadsheet({
     }
   };
 
+  /** Replaces this copy with the account's newer one, saved by someone else. */
+  const applyRemote = (server: CloudWorkbook) => {
+    wb.load(server.workbook);
+    cloudVersionRef.current = server.version;
+    setTitle(server.title);
+    if (!wb.hasSheet(activeSheet)) setActiveSheet(wb.sheets[0].id);
+    // Undo steps from before the update would undo other people's work too.
+    historyRef.current = { undo: [], redo: [] };
+    setHistorySize({ undo: 0, redo: 0 });
+    setEditing(null);
+    if (account && !seed) {
+      saveSheet(docId, {
+        title: server.title,
+        workbook: server.workbook,
+        activeSheet: server.activeSheet,
+        cloud: { owner: account.id, version: server.version, synced: true, role: role ?? "owner" },
+      });
+    }
+    setCloudStatus("saved");
+    setVersion((v) => v + 1);
+  };
+
+  /** Checks whether someone else saved; takes their copy, or asks if there are unsent changes here. */
+  const pullNow = async () => {
+    if (!inCloud || conflict || pushingRef.current || document.hidden) return;
+    let latest: number | null;
+    try {
+      latest = await fetchCloudVersion(docId);
+    } catch {
+      return; // offline; try again later
+    }
+    if (latest === null || latest <= (cloudVersionRef.current ?? 0) || pushingRef.current) return;
+    const server = await fetchCloud(docId).catch(() => null);
+    if (!server || server.version <= (cloudVersionRef.current ?? 0)) return;
+    if (unsyncedRef.current) {
+      setConflict(server);
+      setCloudStatus("conflict");
+    } else {
+      applyRemote(server);
+    }
+  };
+  const pullRef = useRef(pullNow);
+  useEffect(() => {
+    pullRef.current = pullNow;
+  });
+  useEffect(() => {
+    if (!inCloud) return;
+    const timer = setInterval(() => void pullRef.current(), 8000);
+    const visible = () => !document.hidden && void pullRef.current();
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [inCloud]);
+
   // Listeners and follow-up saves call the latest pushNow, which sees the current title and tab.
   const pushRef = useRef(pushNow);
   useEffect(() => {
@@ -265,7 +366,7 @@ function Spreadsheet({
     if (!dirtyRef.current) return;
     const local = setTimeout(() => setSaveStatus(saveLocal(false) ? "saved" : "failed"), 400);
     // The account copy follows a little later, so typing doesn't send a request per key.
-    const cloud = account && !conflict ? setTimeout(() => void pushNow(), 1500) : undefined;
+    const cloud = account && !conflict && unsyncedRef.current ? setTimeout(() => void pushNow(), 1500) : undefined;
     return () => {
       clearTimeout(local);
       clearTimeout(cloud);
@@ -276,7 +377,7 @@ function Spreadsheet({
   // A spreadsheet that's only on this device goes to the account when opened signed in,
   // and unsent changes go when the connection comes back.
   useEffect(() => {
-    if (!account) return;
+    if (!account || readOnly || seed) return;
     if (saved && (cloudVersionRef.current === null || !saved.cloud?.synced)) void pushRef.current();
     const online = () => {
       if (dirtyRef.current || cloudVersionRef.current === null) void pushRef.current();
@@ -302,8 +403,11 @@ function Spreadsheet({
 
   const changed = () => {
     dirtyRef.current = true;
+    unsyncedRef.current = true;
     setVersion((v) => v + 1);
   };
+
+  const notifyReadOnly = () => setToast(`You can view this spreadsheet but not change it${ownerName ? `. Ask ${ownerName} for edit access` : ""}.`);
 
   /** Scrolls just enough to bring a cell fully into view. */
   const ensureVisible = ({ row, col }: CellAddress) => {
@@ -389,6 +493,10 @@ function Spreadsheet({
 
   /** Applies cell changes as one undoable step. Returns false when nothing changed. */
   const commitPatches = (patches: CellPatch[]) => {
+    if (readOnly) {
+      notifyReadOnly();
+      return false;
+    }
     const real = wb.effective(patches);
     if (real.length === 0) return false;
     const undo = wb.apply(real);
@@ -399,6 +507,10 @@ function Spreadsheet({
 
   /** Runs a change to sheets or structure as one undoable step. `fn` may return the sheet to show next. */
   const structural = (fn: () => string | void) => {
+    if (readOnly) {
+      notifyReadOnly();
+      return;
+    }
     const before = wb.toJSON();
     let next: string | void;
     try {
@@ -483,6 +595,10 @@ function Spreadsheet({
   // ---- Cell editing ------------------------------------------------------
 
   const startEditing = (mode: Editing["mode"], value?: string, source: Editing["source"] = "cell") => {
+    if (readOnly) {
+      notifyReadOnly();
+      return;
+    }
     setEditing({
       row: active.row,
       col: active.col,
@@ -1354,8 +1470,10 @@ function Spreadsheet({
           <input
             ref={titleRef}
             value={title}
+            readOnly={readOnly}
             onChange={(e) => {
               dirtyRef.current = true;
+              unsyncedRef.current = true;
               setTitle(e.target.value);
             }}
             onKeyDown={(e) => (e.key === "Enter" || e.key === "Escape") && focusGrid()}
@@ -1385,6 +1503,20 @@ function Spreadsheet({
                 ? "Saved on this device"
                 : ""}
         </span>
+        {account && (role === "owner" || role === null) && !seed && (
+          <button
+            type="button"
+            onClick={async () => {
+              // Sharing needs the spreadsheet in the account first.
+              if (cloudVersionRef.current === null) await pushRef.current();
+              if (cloudVersionRef.current === null) setToast("Save this spreadsheet to your account before sharing it.");
+              else setShareOpen(true);
+            }}
+            className="mt-1 shrink-0 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+          >
+            Share
+          </button>
+        )}
         <div className="mt-1 shrink-0">
           <AccountMenu />
         </div>
@@ -1394,6 +1526,28 @@ function Spreadsheet({
         <Toolbar commands={commands} state={state} />
       </div>
 
+      {readOnly && (
+        <div className="mx-2 mb-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--header-bg)] px-3 py-1.5 text-sm">
+          <span className="flex-1 text-[var(--muted)]">
+            View only{ownerName ? `: ${ownerName} shared this with you` : ""}. Changes from others show up here as they&apos;re saved.
+          </span>
+          {!account && (
+            <Link href={`/login?next=${encodeURIComponent(`/sheet/${docId}`)}`} className="font-medium text-[var(--accent)] hover:underline">
+              Sign in
+            </Link>
+          )}
+        </div>
+      )}
+      {shareOpen && (
+        <ShareDialog
+          docId={docId}
+          title={title}
+          onClose={() => {
+            setShareOpen(false);
+            focusGrid();
+          }}
+        />
+      )}
       {conflict && (
         <div role="alert" className="mx-2 mb-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--accent)]/40 bg-[var(--header-selected)] px-3 py-2 text-sm">
           <span className="flex-1">
@@ -1423,6 +1577,7 @@ function Spreadsheet({
               setConflict(null);
               setCloudStatus(null);
               dirtyRef.current = true;
+              unsyncedRef.current = true;
               setVersion((v) => v + 1);
             }}
             className="rounded-md bg-[var(--accent)] px-3 py-1 font-medium text-white hover:opacity-90"
@@ -1463,6 +1618,7 @@ function Spreadsheet({
         <span className="font-serif text-sm italic text-[var(--muted)]">fx</span>
         <input
           value={barValue}
+          readOnly={readOnly}
           aria-label="Formula bar"
           onFocus={(e) => {
             if (editing) setEditing({ ...editing, mode: "edit", source: "bar" });
@@ -1539,14 +1695,17 @@ function Spreadsheet({
             placeCaretAtEnd(e);
           }}
           onColResize={(col, width) => {
+            if (readOnly) return;
             wb.setColWidth(activeSheet, col, width === DEFAULT_COL_WIDTH ? undefined : width);
             changed();
           }}
           onRowResize={(row, height) => {
+            if (readOnly) return;
             wb.setRowHeight(activeSheet, row, height === 24 ? undefined : height);
             changed();
           }}
           onAutoFitCol={(col) => {
+            if (readOnly) return;
             wb.setColWidth(activeSheet, col, fitColumnWidth(col));
             changed();
           }}
