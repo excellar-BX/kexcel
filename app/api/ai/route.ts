@@ -1,5 +1,9 @@
 import { AIError, aiModel, aiProvider, askSheet, checkSheet, explainFormula, planActions, writeFormula } from "@/lib/ai/ai.server";
 import type { AIRequest, AIResponse } from "@/lib/ai/schemas";
+import { currentUser } from "@/lib/server/auth";
+
+/** Set AI_REQUIRE_SIGNIN=false to let anyone who can reach the server use the AI. */
+const signInRequired = () => process.env.AI_REQUIRE_SIGNIN !== "false";
 
 const MAX_BODY_BYTES = 200_000;
 const MAX_TEXT = 2_000;
@@ -37,10 +41,14 @@ export async function POST(request: Request) {
 
   if (body.action === "status") {
     const provider = aiProvider();
-    return reply({ ok: true, action: "status", enabled: provider !== null, provider, model: provider ? aiModel() : "" });
+    const signedIn = !signInRequired() || (await currentUser()) !== null;
+    return reply({ ok: true, action: "status", enabled: provider !== null, signedIn, provider, model: provider ? aiModel() : "" });
   }
 
-  const who = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+  const user = await currentUser();
+  if (signInRequired() && !user) return fail("Sign in to use the AI assistant.", 401);
+
+  const who = user?.id ?? (request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local");
   if (rateLimited(who)) return fail("That's a lot of AI requests in a minute. Wait a moment and try again.", 429);
 
   const context = typeof body.context === "string" ? body.context : "";

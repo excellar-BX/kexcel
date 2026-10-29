@@ -118,7 +118,7 @@ export type AIRequest =
   | { action: "plan"; context: string; request: string };
 
 export type AIResponse =
-  | { ok: true; action: "status"; enabled: boolean; provider: "anthropic" | "groq" | null; model: string }
+  | { ok: true; action: "status"; enabled: boolean; signedIn: boolean; provider: "anthropic" | "groq" | null; model: string }
   | { ok: true; action: "formula"; result: FormulaResult }
   | { ok: true; action: "explain"; result: ExplainResult }
   | { ok: true; action: "ask"; result: AskResult }

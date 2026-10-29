@@ -10,11 +10,19 @@ npm run dev     # http://localhost:3000
 npm test        # formula engine tests
 ```
 
+## Accounts and cloud save
+
+Sign in (top right) and spreadsheets are saved to your account as you type, so they open on any device. Kexcel still keeps a copy in the browser, so it works offline and catches up when the connection returns. If a spreadsheet changed on two devices before syncing, Kexcel asks which version to keep instead of overwriting one.
+
+- Accounts and spreadsheets live in a SQLite file at `data/kexcel.db` (Node's built-in `node:sqlite`; set `KEXCEL_DB_PATH` to move it). It is git-ignored; back it up.
+- Passwords are hashed with scrypt; sessions are random tokens stored only as hashes, in an httpOnly cookie. Requests that change data must come from Kexcel's own pages.
+- To deploy, use a host with a persistent disk, or swap `lib/server/db.ts` and `lib/server/workbooks.ts` for Postgres. Serverless hosts without a disk will lose the database.
+
 ## AI assistant
 
 The AI button (and the AI menu) opens a panel that can make changes for you from a plain-English request (it shows the planned steps first, and applies them as one undoable step), write a formula, explain a formula, answer questions about a tab, and check a tab for likely mistakes. Formulas are checked by Kexcel's own engine and previewed before you insert them.
 
-To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tier at console.groq.com) or `ANTHROPIC_API_KEY`, and restart `npm run dev`. With both set, Anthropic is used unless `AI_PROVIDER=groq`. Keys stay on the server (`lib/ai/`, `app/api/ai/route.ts`); the browser never sees them. The route has a simple in-memory rate limit, so add sign-in and proper limits before deploying it publicly.
+To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tier at console.groq.com) or `ANTHROPIC_API_KEY`, and restart `npm run dev`. With both set, Anthropic is used unless `AI_PROVIDER=groq`. Keys stay on the server (`lib/ai/`, `app/api/ai/route.ts`); the browser never sees them. The AI needs a signed-in account (set `AI_REQUIRE_SIGNIN=false` to allow anyone), with a per-account rate limit.
 
 ## What works today
 
@@ -60,7 +68,9 @@ lib/sheet-ops.ts        Fill and sort
 lib/charts.ts           Chart data from ranges, axis ticks
 lib/conditional.ts      Conditional formatting rules
 lib/validation.ts       Dropdown list rules
-lib/storage.ts          localStorage persistence
+lib/storage.ts          Browser copy of each spreadsheet (offline)
+lib/cloud.ts            Account and cloud-save requests; lib/sync.ts reconciles copies
+lib/server/             Database, sessions, and the account's spreadsheets (server only)
 lib/tsv.ts              Clipboard (TSV) and CSV
 lib/xlsx/               Excel .xlsx reader and writer (no network, runs in the browser)
 lib/ai/                 AI assistant prompts and provider adapters (server only)
@@ -69,6 +79,6 @@ lib/ai/                 AI assistant prompts and provider adapters (server only)
 ## Roadmap
 
 1. Charts, conditional formatting and comments in .xlsx files
-2. Accounts and cloud save, so a spreadsheet opens on any device
+2. Password reset by email
 3. Sharing and editing together
 4. Templates for small businesses

@@ -1,9 +1,10 @@
+import AccountMenu from "@/components/auth/AccountMenu";
 import { SheetList } from "@/components/ClientOnly";
 
 const FEATURES = [
   { title: "Live formulas", body: "SUM, IF, VLOOKUP, COUNTIF and 40+ functions, across tabs with Sheet2!A1." },
   { title: "Format like a pro", body: "Currency, percents, fonts, colours, borders and alignment from one toolbar." },
-  { title: "Saved as you type", body: "Your spreadsheets stay on this device, even offline. Import and export CSV." },
+  { title: "Saved everywhere", body: "Sign in and your spreadsheets follow you to any device, and still work offline." },
 ];
 
 export default function Home() {
@@ -13,7 +14,8 @@ export default function Home() {
         <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--accent)] text-lg font-bold text-white">
           K
         </span>
-        <span className="text-xl font-semibold">Kexcel</span>
+        <span className="flex-1 text-xl font-semibold">Kexcel</span>
+        <AccountMenu />
       </div>
 
       <h1 className="text-3xl font-bold tracking-tight sm:text-5xl">Spreadsheets that just work.</h1>

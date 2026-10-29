@@ -5,6 +5,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import AIPanel, { type AITab } from "@/components/ai/AIPanel";
+import AccountMenu from "@/components/auth/AccountMenu";
+import { useSession } from "@/components/auth/useSession";
+import { CloudError, pushCloud, type Account, type CloudWorkbook } from "@/lib/cloud";
+import { openFromCloud } from "@/lib/sync";
 import ChartFrame from "@/components/charts/ChartFrame";
 import ChartPanel from "@/components/panels/ChartPanel";
 import ConditionalPanel from "@/components/panels/ConditionalPanel";
@@ -87,12 +91,63 @@ const ARROWS: Record<string, [number, number]> = {
 };
 
 /** Remounts the editor when the URL switches to another document. */
+/**
+ * Remounts the editor when the URL switches to another document. Signed in,
+ * it first brings this device's copy up to date with the account.
+ */
 export default function SpreadsheetRoute() {
   const { id } = useParams<{ id: string }>();
-  return <Spreadsheet key={id} docId={id} />;
+  const session = useSession();
+  const account = session.status === "ready" ? session.account : null;
+  const [opened, setOpened] = useState<{ id: string; owner: string; result: Awaited<ReturnType<typeof openFromCloud>> } | null>(null);
+
+  useEffect(() => {
+    if (!account) return;
+    let live = true;
+    void openFromCloud(id, account.id).then((result) => {
+      if (live) setOpened({ id, owner: account.id, result });
+    });
+    return () => {
+      live = false;
+    };
+  }, [id, account]);
+
+  const waiting = session.status === "loading" || (account && (opened?.id !== id || opened.owner !== account.id));
+  if (waiting) return <div className="grid h-dvh place-items-center text-sm text-[var(--muted)]">Opening…</div>;
+  if (opened?.result.kind === "forbidden") {
+    return (
+      <div className="grid h-dvh place-items-center px-4 text-center">
+        <div>
+          <p className="font-medium">This spreadsheet belongs to another account.</p>
+          <Link href="/" className="mt-2 inline-block text-sm text-[var(--accent)] hover:underline">
+            Go to your spreadsheets
+          </Link>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Spreadsheet
+      key={`${id}:${account?.id ?? "device"}`}
+      docId={id}
+      account={account}
+      initialConflict={opened?.result.kind === "conflict" ? opened.result.server : null}
+    />
+  );
 }
 
-function Spreadsheet({ docId }: { docId: string }) {
+type CloudStatus = "saving" | "saved" | "offline" | "conflict" | "error" | null;
+
+function Spreadsheet({
+  docId,
+  account,
+  initialConflict,
+}: {
+  docId: string;
+  account: Account | null;
+  /** The account's copy, when both it and this device changed since they last matched. */
+  initialConflict: CloudWorkbook | null;
+}) {
   const router = useRouter();
   // Rendered client-only, so reading localStorage while initialising state is safe.
   const [saved] = useState(() => loadSheet(docId));
@@ -110,6 +165,12 @@ function Spreadsheet({ docId }: { docId: string }) {
   const [currency, setCurrency] = useState("USD");
   const [historySize, setHistorySize] = useState({ undo: 0, redo: 0 });
   const [saveStatus, setSaveStatus] = useState<"saved" | "failed" | null>(saved ? "saved" : null);
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>(account && saved?.cloud?.synced ? "saved" : null);
+  const [conflict, setConflict] = useState<CloudWorkbook | null>(initialConflict);
+  // The account version this device's copy is based on (null: not in the account yet).
+  const cloudVersionRef = useRef<number | null>(saved?.cloud && saved.cloud.owner === account?.id ? saved.cloud.version : null);
+  const pushingRef = useRef(false);
+  const pushAgainRef = useRef(false);
   const [menu, setMenu] = useState<{ x: number; y: number; target: "cell" | "row" | "col" } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -150,14 +211,80 @@ function Spreadsheet({ docId }: { docId: string }) {
 
   // ---- Persistence -------------------------------------------------------
 
+  /** Saves this device's copy, noting whether it still needs to go to the account. */
+  const saveLocal = (synced: boolean) =>
+    saveSheet(docId, {
+      title,
+      workbook: wb.toJSON(),
+      activeSheet,
+      ...(account && cloudVersionRef.current !== null
+        ? { cloud: { owner: account.id, version: cloudVersionRef.current, synced } }
+        : account
+          ? { cloud: { owner: account.id, version: 0, synced: false } }
+          : {}),
+    });
+
+  /** Sends the current copy to the account. One request at a time; changes made meanwhile follow. */
+  const pushNow = async () => {
+    if (!account || conflict) return;
+    if (pushingRef.current) {
+      pushAgainRef.current = true;
+      return;
+    }
+    pushingRef.current = true;
+    setCloudStatus("saving");
+    try {
+      const res = await pushCloud(docId, { title, workbook: wb.toJSON(), activeSheet }, cloudVersionRef.current);
+      if ("conflict" in res) {
+        setConflict(res.conflict);
+        setCloudStatus("conflict");
+      } else {
+        cloudVersionRef.current = res.version;
+        saveLocal(true);
+        setCloudStatus("saved");
+      }
+    } catch (e) {
+      setCloudStatus(e instanceof CloudError && e.offline ? "offline" : "error");
+      if (e instanceof CloudError && !e.offline) setToast(e.message);
+    } finally {
+      pushingRef.current = false;
+      if (pushAgainRef.current) {
+        pushAgainRef.current = false;
+        void pushRef.current();
+      }
+    }
+  };
+
+  // Listeners and follow-up saves call the latest pushNow, which sees the current title and tab.
+  const pushRef = useRef(pushNow);
+  useEffect(() => {
+    pushRef.current = pushNow;
+  });
+
   useEffect(() => {
     if (!dirtyRef.current) return;
-    const timer = setTimeout(() => {
-      const ok = saveSheet(docId, { title, workbook: wb.toJSON(), activeSheet });
-      setSaveStatus(ok ? "saved" : "failed");
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [version, title, activeSheet, wb, docId]);
+    const local = setTimeout(() => setSaveStatus(saveLocal(false) ? "saved" : "failed"), 400);
+    // The account copy follows a little later, so typing doesn't send a request per key.
+    const cloud = account && !conflict ? setTimeout(() => void pushNow(), 1500) : undefined;
+    return () => {
+      clearTimeout(local);
+      clearTimeout(cloud);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, title, activeSheet, wb, docId, account, conflict]);
+
+  // A spreadsheet that's only on this device goes to the account when opened signed in,
+  // and unsent changes go when the connection comes back.
+  useEffect(() => {
+    if (!account) return;
+    if (saved && (cloudVersionRef.current === null || !saved.cloud?.synced)) void pushRef.current();
+    const online = () => {
+      if (dirtyRef.current || cloudVersionRef.current === null) void pushRef.current();
+    };
+    window.addEventListener("online", online);
+    return () => window.removeEventListener("online", online);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
 
   useEffect(() => {
     if (!toast) return;
@@ -902,7 +1029,7 @@ function Spreadsheet({ docId }: { docId: string }) {
     newWorkbook: () => router.push(`/sheet/${newSheetId()}`),
     makeCopy: () => {
       const id = newSheetId();
-      if (saveSheet(id, { title: `Copy of ${title}`, workbook: wb.toJSON(), activeSheet })) router.push(`/sheet/${id}`);
+      if (saveSheet(id, { title: `Copy of ${title}`, workbook: wb.toJSON(), activeSheet })) router.push(`/sheet/${id}`); // uploaded on open
       else setToast("Couldn't save a copy in this browser.");
     },
     importCSV: () => fileRef.current?.click(),
@@ -1239,14 +1366,71 @@ function Spreadsheet({ docId }: { docId: string }) {
             <MenuBar commands={commands} state={state} />
           </div>
         </div>
-        <span className="mt-2 hidden shrink-0 text-xs text-[var(--muted)] sm:block">
-          {saveStatus === "failed" ? "Couldn't save in this browser" : saveStatus === "saved" ? "Saved on this device" : ""}
+        <span className="mt-2 hidden shrink-0 text-xs text-[var(--muted)] sm:block" role="status">
+          {account
+            ? cloudStatus === "saving"
+              ? "Saving…"
+              : cloudStatus === "saved"
+                ? "Saved to your account"
+                : cloudStatus === "offline"
+                  ? "Offline: saved on this device"
+                  : cloudStatus === "conflict"
+                    ? "Changed on another device"
+                    : cloudStatus === "error"
+                      ? "Not saved to your account"
+                      : ""
+            : saveStatus === "failed"
+              ? "Couldn't save in this browser"
+              : saveStatus === "saved"
+                ? "Saved on this device"
+                : ""}
         </span>
+        <div className="mt-1 shrink-0">
+          <AccountMenu />
+        </div>
       </header>
 
       <div className="px-2 py-1.5">
         <Toolbar commands={commands} state={state} />
       </div>
+
+      {conflict && (
+        <div role="alert" className="mx-2 mb-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--accent)]/40 bg-[var(--header-selected)] px-3 py-2 text-sm">
+          <span className="flex-1">
+            This spreadsheet was changed on another device
+            {conflict.updatedAt ? ` (${new Date(conflict.updatedAt).toLocaleString()})` : ""}. Which version do you want?
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              saveSheet(docId, {
+                title: conflict.title,
+                workbook: conflict.workbook,
+                activeSheet: conflict.activeSheet,
+                cloud: { owner: account!.id, version: conflict.version, synced: true },
+              });
+              window.location.reload();
+            }}
+            className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-1 hover:bg-[var(--hover)]"
+          >
+            Use the other version
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              // Keeping this one: save it over the account's newer copy.
+              cloudVersionRef.current = conflict.version;
+              setConflict(null);
+              setCloudStatus(null);
+              dirtyRef.current = true;
+              setVersion((v) => v + 1);
+            }}
+            className="rounded-md bg-[var(--accent)] px-3 py-1 font-medium text-white hover:opacity-90"
+          >
+            Keep this version
+          </button>
+        </div>
+      )}
 
       {/* Formula bar */}
       <div className="flex items-center gap-2 border-y border-[var(--border)] px-3 py-1 text-sm">

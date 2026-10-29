@@ -112,7 +112,7 @@ export interface AIPanelProps {
 
 export default function AIPanel(props: AIPanelProps) {
   const { wb, sheet, selection, active, tab } = props;
-  const [status, setStatus] = useState<{ enabled: boolean; model: string; provider: string } | null>(null);
+  const [status, setStatus] = useState<{ enabled: boolean; signedIn: boolean; model: string; provider: string } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -120,8 +120,8 @@ export default function AIPanel(props: AIPanelProps) {
       if (live) {
         setStatus(
           r.ok && r.action === "status"
-            ? { enabled: r.enabled, model: r.model, provider: r.provider === "groq" ? "Groq" : "Anthropic" }
-            : { enabled: false, model: "", provider: "" },
+            ? { enabled: r.enabled, signedIn: r.signedIn, model: r.model, provider: r.provider === "groq" ? "Groq" : "Anthropic" }
+            : { enabled: false, signedIn: false, model: "", provider: "" },
         );
       }
     });
@@ -166,6 +166,17 @@ export default function AIPanel(props: AIPanelProps) {
           <p className="text-sm text-[var(--muted)]">Connecting…</p>
         ) : !status.enabled ? (
           <SetupNote />
+        ) : !status.signedIn ? (
+          <div className="space-y-2 text-sm">
+            <p className="font-medium">Sign in to use the AI assistant.</p>
+            <p className="text-[var(--muted)]">The AI is part of your account, so your spreadsheets stay private to you.</p>
+            <a
+              href={`/login?next=${encodeURIComponent(window.location.pathname)}`}
+              className="inline-block rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Sign in
+            </a>
+          </div>
         ) : (
           <>
             {/* Tabs stay mounted so switching keeps what you typed and the last result. */}
@@ -187,7 +198,7 @@ export default function AIPanel(props: AIPanelProps) {
           </>
         )}
       </div>
-      {status?.enabled && (
+      {status?.enabled && status.signedIn && (
         <p className="border-t border-[var(--border)] px-3 py-2 text-[11px] text-[var(--muted)]">
           Uses {status.model} via {status.provider}. Your sheet&apos;s contents are sent to {status.provider} with each request. AI can make
           mistakes, so check results before relying on them.

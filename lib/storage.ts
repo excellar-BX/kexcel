@@ -10,6 +10,8 @@ export interface SavedSheet {
   workbook: WorkbookJSON;
   /** The tab that was open last. */
   activeSheet?: string;
+  /** Set when this copy belongs to an account: the version it was last synced to, and whether it has changed since. */
+  cloud?: { owner: string; version: number; synced: boolean };
   updatedAt: number;
 }
 
@@ -39,6 +41,7 @@ export function loadSheet(id: string): SavedSheet | null {
       title: data.title ?? "Untitled sheet",
       workbook,
       activeSheet: data.activeSheet,
+      cloud: data.cloud,
       updatedAt: data.updatedAt ?? 0,
     };
   } catch {
@@ -80,6 +83,8 @@ export function listSheets(): SheetSummary[] {
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** A random id for a spreadsheet (and rules and charts): 12 characters, safe in URLs. */
 export function newSheetId(): string {
-  return Math.random().toString(36).slice(2, 10);
+  const bytes = crypto.getRandomValues(new Uint8Array(9));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_");
 }
