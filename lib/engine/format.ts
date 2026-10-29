@@ -103,7 +103,8 @@ export function formatValue(v: Scalar, format?: CellFormat | null, locale?: stri
       return v.toExponential(decimals).toUpperCase();
     case "currency":
       try {
-        return v.toLocaleString(locale, { style: "currency", currency: format?.currency ?? "USD", ...digits });
+        // The narrow symbol reads as ₦1,200 rather than NGN 1,200.
+        return v.toLocaleString(locale, { style: "currency", currency: format?.currency ?? "USD", currencyDisplay: "narrowSymbol", ...digits });
       } catch {
         return v.toLocaleString(locale, digits);
       }

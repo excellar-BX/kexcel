@@ -90,6 +90,8 @@ export interface GridProps {
   onOpenList: (anchor: DOMRect) => void;
   /** Charts and other things floating over the cells. */
   objects?: React.ReactNode;
+  /** A cell's note, if it has one. */
+  commentAt: (row: number, col: number) => string | undefined;
 }
 
 export default function Grid(props: GridProps) {
@@ -102,6 +104,8 @@ export default function Grid(props: GridProps) {
   const frameRef = useRef(0);
   const [viewport, setViewport] = useState<Viewport>({ top: 0, left: 0, width: 1200, height: 800 });
   const [fillPreview, setFillPreview] = useState<Range | null>(null);
+  // The cell under the pointer, for showing its note.
+  const [hovered, setHovered] = useState<CellAddress | null>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -352,20 +356,21 @@ export default function Grid(props: GridProps) {
     />
   );
 
-  /** A small corner flag on cells whose value isn't in their dropdown list. */
-  const invalidMark = (key: string, right: number, top: number) => (
+  /** A red flag in the top-left corner of cells whose value isn't in their dropdown list. */
+  const invalidMark = (key: string, left: number, top: number) => (
     <div
       key={key}
       className="pointer-events-none absolute"
-      title="This value isn't in the cell's list"
-      style={{
-        left: right - 7,
-        top,
-        width: 0,
-        height: 0,
-        borderTop: "6px solid var(--error)",
-        borderLeft: "6px solid transparent",
-      }}
+      style={{ left, top, width: 0, height: 0, borderTop: "6px solid var(--error)", borderRight: "6px solid transparent" }}
+    />
+  );
+
+  /** An accent flag in the top-right corner of cells with a note. */
+  const commentMark = (key: string, right: number, top: number) => (
+    <div
+      key={key}
+      className="pointer-events-none absolute"
+      style={{ left: right - 7, top, width: 0, height: 0, borderTop: "6px solid var(--accent)", borderLeft: "6px solid transparent" }}
     />
   );
 
@@ -392,7 +397,8 @@ export default function Grid(props: GridProps) {
         const width = layout.colWidth(col);
         fills.push(cellFill(`f${row},${col}`, format, left, top, width, height));
         if (look?.bar) fills.push(dataBar(`b${row},${col}`, look.bar, left, top, width, height));
-        if (value !== null && props.invalid(row, col)) texts.push(invalidMark(`i${row},${col}`, left + width, top));
+        if (value !== null && props.invalid(row, col)) texts.push(invalidMark(`i${row},${col}`, left, top));
+        if (props.commentAt(row, col)) texts.push(commentMark(`c${row},${col}`, left + width, top));
         texts.push(cellText(`t${row},${col}`, value, format, left, top, width, height, c1));
       }
     }
@@ -472,8 +478,25 @@ export default function Grid(props: GridProps) {
       <div className="pointer-events-none absolute border border-[var(--accent)] bg-[var(--selection)]" style={selBox} />
       <div
         className="pointer-events-none absolute border-2 border-[var(--accent)]"
+        data-active-cell={layerOf(active.row, active.col) === layer ? "" : undefined}
         style={cellBox(active.row, active.col)}
       />
+      {!editing &&
+        (() => {
+          // The note of the hovered cell, or else of the active cell, beside it.
+          const at = hovered && props.commentAt(hovered.row, hovered.col) ? hovered : active;
+          const note = props.commentAt(at.row, at.col);
+          if (!note || layerOf(at.row, at.col) !== layer) return null;
+          const b = cellBox(at.row, at.col);
+          return (
+            <div
+              className="pointer-events-none absolute z-[7] max-w-60 whitespace-pre-wrap break-words rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1.5 text-xs shadow-lg"
+              style={{ left: b.left + b.width + 6, top: b.top }}
+            >
+              {note}
+            </div>
+          );
+        })()}
       {!editing && props.hasList(active.row, active.col) && layerOf(active.row, active.col) === layer && (
         <button
           type="button"
@@ -529,6 +552,11 @@ export default function Grid(props: GridProps) {
   );
 
   const cellHandlers = {
+    onMouseMove: (e: React.MouseEvent) => {
+      const cell = pointToCell(e.clientX, e.clientY);
+      if (cell.row !== hovered?.row || cell.col !== hovered?.col) setHovered(cell);
+    },
+    onMouseLeave: () => setHovered(null),
     onMouseDown: onCellsMouseDown,
     onDoubleClick: props.onEdit,
     onContextMenu: (e: React.MouseEvent) => onContextMenu(e, "cell"),

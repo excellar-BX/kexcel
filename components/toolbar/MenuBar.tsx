@@ -158,6 +158,8 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
         ...insertDeleteItems(c).slice(0, 4),
         { type: "separator" },
         { label: "Chart", onSelect: c.insertChart },
+        { label: "Pivot table…", onSelect: c.openPivot },
+        { label: "Comment", shortcut: "Ctrl+Alt+M", onSelect: c.editComment },
         { label: "Sheet", onSelect: c.addSheet },
         { label: "Function", items: FUNCTIONS.map((f) => ({ label: f, onSelect: () => c.insertFunction(f) })) },
       ],
@@ -205,11 +207,13 @@ function buildMenus(c: Commands, s: EditorState): { label: string; items: MenuEn
         { label: "Sort range Z to A", onSelect: () => c.sort(false) },
         { type: "separator" },
         { label: "Dropdown lists…", onSelect: c.openValidation },
+        { label: "Pivot table…", onSelect: c.openPivot },
       ],
     },
     {
       label: "AI",
       items: [
+        { label: "Make changes for me…", onSelect: () => c.openAI("do") },
         { label: "Write a formula", onSelect: () => c.openAI("formula") },
         { label: "Explain this formula", onSelect: () => c.openAI("explain") },
         { label: "Ask about this tab", onSelect: () => c.openAI("ask") },

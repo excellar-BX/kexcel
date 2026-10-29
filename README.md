@@ -12,7 +12,7 @@ npm test        # formula engine tests
 
 ## AI assistant
 
-The ✨ AI button (and the AI menu) opens a panel that can write a formula from a plain-English request, explain a formula, answer questions about a tab, and check a tab for likely mistakes. Formulas are checked by Kexcel's own engine and previewed before you insert them.
+The AI button (and the AI menu) opens a panel that can make changes for you from a plain-English request (it shows the planned steps first, and applies them as one undoable step), write a formula, explain a formula, answer questions about a tab, and check a tab for likely mistakes. Formulas are checked by Kexcel's own engine and previewed before you insert them.
 
 To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tier at console.groq.com) or `ANTHROPIC_API_KEY`, and restart `npm run dev`. With both set, Anthropic is used unless `AI_PROVIDER=groq`. Keys stay on the server (`lib/ai/`, `app/api/ai/route.ts`); the browser never sees them. The route has a simple in-memory rate limit, so add sign-in and proper limits before deploying it publicly.
 
@@ -28,6 +28,8 @@ To turn it on, copy `.env.example` to `.env.local`, set `GROQ_API_KEY` (free tie
 - Copy, cut and paste with formulas and formats, also to and from Excel and Google Sheets
 - Undo and redo for edits, formatting, structure and tab changes
 - Open and download Excel files (.xlsx) with values, formulas, formatting, column widths, row heights and frozen panes; CSV import and export
+- Pivot tables on a new tab, built from live SUMIFS-style formulas (Data > Pivot table)
+- Cell comments (Ctrl+Alt+M or right-click), shown on hover
 - Charts (column, bar, line, area, pie) drawn from a range, movable and resizable, with hover details
 - Conditional formatting: highlight rules, colour scales and data bars (Format > Conditional formatting)
 - Dropdown lists in cells from typed choices or a range, rejecting or flagging other values (Data > Dropdown lists)
@@ -66,7 +68,7 @@ lib/ai/                 AI assistant prompts and provider adapters (server only)
 
 ## Roadmap
 
-1. Charts and conditional formatting in .xlsx files, pivot tables, comments
-2. AI: write formulas from plain English, explain formulas, find errors, ask questions of a sheet
-3. Accounts, cloud save, sharing, charts, mobile polish
+1. Charts, conditional formatting and comments in .xlsx files
+2. Accounts and cloud save, so a spreadsheet opens on any device
+3. Sharing and editing together
 4. Templates for small businesses

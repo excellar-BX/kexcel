@@ -38,6 +38,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       [`${mod} + F`, "Find"],
       [`${mod} + P`, "Print"],
       [`${mod} + O`, "Open a file"],
+      [`${mod} + Alt + M`, "Add or edit a comment"],
     ],
   },
   {

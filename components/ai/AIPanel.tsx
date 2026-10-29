@@ -3,7 +3,17 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { CheckIcon, SparklesIcon, XIcon } from "@/components/ui/icons";
 import { describeSheet, type SheetContext } from "@/lib/ai/context";
-import type { AIRequest, AIResponse, AskResult, CheckResult, ExplainResult, FormulaResult } from "@/lib/ai/schemas";
+import type { ApplyResult } from "@/lib/ai/actions";
+import type {
+  AIRequest,
+  AIResponse,
+  AskResult,
+  CheckResult,
+  ExplainResult,
+  FormulaResult,
+  PlanResult,
+  SheetAction,
+} from "@/lib/ai/schemas";
 import {
   addressToName,
   formatValue,
@@ -15,9 +25,10 @@ import {
 } from "@/lib/engine";
 import type { Range } from "@/lib/sheet-ops";
 
-export type AITab = "formula" | "explain" | "ask" | "check";
+export type AITab = "do" | "formula" | "explain" | "ask" | "check";
 
 const TABS: { id: AITab; label: string }[] = [
+  { id: "do", label: "Do" },
   { id: "formula", label: "Write" },
   { id: "explain", label: "Explain" },
   { id: "ask", label: "Ask" },
@@ -95,6 +106,8 @@ export interface AIPanelProps {
   onInsert: (cell: CellAddress, raw: string) => void;
   /** Selects a cell or range written like "B4", "C2:C9" or "Sales!A1". */
   onGoTo: (ref: string) => void;
+  /** Carries out a plan as one undoable step. */
+  onApplyPlan: (actions: SheetAction[]) => ApplyResult;
 }
 
 export default function AIPanel(props: AIPanelProps) {
@@ -156,6 +169,9 @@ export default function AIPanel(props: AIPanelProps) {
         ) : (
           <>
             {/* Tabs stay mounted so switching keeps what you typed and the last result. */}
+            <div hidden={tab !== "do"}>
+              <DoTab {...props} context={context} />
+            </div>
             <div hidden={tab !== "formula"}>
               <FormulaTab {...props} context={context} />
             </div>
@@ -213,6 +229,157 @@ function TruncatedNote({ ctx }: { ctx: SheetContext | null }) {
       This tab is large, so the AI only saw the first {t.shownRows} of {t.totalRows} rows and {t.shownCols} of{" "}
       {t.totalCols} columns.
     </p>
+  );
+}
+
+const EXAMPLES = [
+  "Add a total row under the numbers",
+  "Make the header row bold with a light blue fill",
+  "Chart the sales by month",
+  "Highlight amounts over 1000 in red",
+  "Make a pivot table of sales by region",
+];
+
+const STEP_LABELS: Partial<Record<SheetAction["type"], string>> = {
+  set_values: "Write",
+  format: "Format",
+  clear: "Clear",
+  clear_format: "Clear format",
+  insert_rows: "Insert rows",
+  insert_columns: "Insert columns",
+  delete_rows: "Delete rows",
+  delete_columns: "Delete columns",
+  sort: "Sort",
+  add_sheet: "New tab",
+  switch_sheet: "Go to tab",
+  rename_sheet: "Rename tab",
+  chart: "Chart",
+  highlight: "Highlight",
+  color_scale: "Colour scale",
+  data_bars: "Data bars",
+  dropdown: "Dropdown",
+  freeze: "Freeze",
+  merge: "Merge",
+  unmerge: "Unmerge",
+  column_width: "Width",
+  comment: "Comment",
+  pivot: "Pivot table",
+};
+
+/** Plans changes from a request, shows them, and applies them only when the user says so. */
+function DoTab({ context, onApplyPlan }: TabProps) {
+  const [request, setRequest] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<{ value: PlanResult; ctx: SheetContext } | null>(null);
+  const [done, setDone] = useState<ApplyResult | null>(null);
+
+  const submit = async (text = request) => {
+    if (!text.trim() || busy) return;
+    setRequest(text);
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    setPlan(null);
+    const ctx = context();
+    const res = await callAI({ action: "plan", context: ctx.text, request: text });
+    setBusy(false);
+    if (!res.ok) return setError(res.error);
+    if (res.action === "plan") setPlan({ value: res.result, ctx });
+  };
+
+  return (
+    <div className="space-y-3">
+      <label className="block text-sm">
+        <span className="mb-1.5 block text-[var(--muted)]">Tell Kexcel what to do with this tab</span>
+        <textarea
+          rows={3}
+          value={request}
+          onChange={(e) => setRequest(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+          placeholder='e.g. "Add a total row and make the headers bold"'
+          className={textArea}
+        />
+      </label>
+      <button type="button" onClick={() => void submit()} disabled={busy || !request.trim()} className={primaryButton}>
+        {busy ? "Planning…" : "Plan it"}
+      </button>
+      {!plan && !busy && !done && (
+        <div className="flex flex-wrap gap-1.5">
+          {EXAMPLES.map((ex) => (
+            <button
+              key={ex}
+              type="button"
+              onClick={() => void submit(ex)}
+              className="rounded-full border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--fg)]"
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <ErrorNote>{error}</ErrorNote>}
+
+      {plan && (
+        <div className="space-y-2.5 rounded-lg border border-[var(--border)] p-3">
+          <p className="text-sm">{plan.value.summary}</p>
+          {plan.value.actions.length > 0 ? (
+            <>
+              <ol className="space-y-1.5">
+                {plan.value.actions.map((a, i) => (
+                  <li key={i} className="flex gap-2 text-sm">
+                    <span className="w-5 shrink-0 text-right tabular-nums text-[var(--muted)]">{i + 1}.</span>
+                    <span className="flex-1">
+                      {a.description}
+                      <span className="ml-1.5 rounded bg-[var(--header-bg)] px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                        {STEP_LABELS[a.type] ?? a.type}
+                        {a.range ? ` ${a.range}` : ""}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <p className="text-xs text-[var(--muted)]">Nothing has changed yet. Review the steps, then apply them.</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={primaryButton}
+                  onClick={() => {
+                    setDone(onApplyPlan(plan.value.actions));
+                    setPlan(null);
+                  }}
+                >
+                  Apply {plan.value.actions.length} step{plan.value.actions.length === 1 ? "" : "s"}
+                </button>
+                <button type="button" className={secondaryButton} onClick={() => setPlan(null)}>
+                  Discard
+                </button>
+              </div>
+            </>
+          ) : null}
+          <TruncatedNote ctx={plan.ctx} />
+        </div>
+      )}
+
+      {done && (
+        <div className="space-y-2 rounded-lg border border-[var(--border)] p-3">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <CheckIcon size={16} className="text-[var(--accent)]" />
+            {done.applied} step{done.applied === 1 ? "" : "s"} done. Press Ctrl+Z to undo them all.
+          </p>
+          {done.problems.map((p, i) => (
+            <p key={i} className="text-sm text-[var(--muted)]">
+              {p}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

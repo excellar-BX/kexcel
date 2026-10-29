@@ -259,6 +259,15 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
         .map((range, j) => ({ id: `v${i}-${j}`, range, strict, ...list }));
     });
     conditionalRules += children(ws, "conditionalFormatting").length;
+    const comments: Record<string, string> = {};
+    for (const [, path] of target ? relsOf(target) : []) {
+      if (!/comments\d*\.xml$/i.test(path)) continue;
+      for (const c of children(child(child(read(path), "comments"), "commentList"), "comment")) {
+        const at = nameToAddress(c.attrs.ref ?? "");
+        const text = sharedString(child(c, "text") ?? { name: "", attrs: {}, children: [], text: "" }).trim();
+        if (at && text && at.row < limits.maxRows && at.col < limits.maxCols) comments[addressToName(at)] = text;
+      }
+    }
     if (child(ws, "drawing")) hasDrawings = true;
 
     const pane = child(child(child(ws, "sheetViews"), "sheetView"), "pane");
@@ -277,6 +286,7 @@ export function readXlsx(data: Uint8Array, limits: ImportLimits): ImportResult {
       ...(freeze ? { freeze } : {}),
       ...(merges.length ? { merges } : {}),
       ...(validations.length ? { validations } : {}),
+      ...(Object.keys(comments).length ? { comments } : {}),
     });
   }
 

@@ -8,10 +8,13 @@ import AIPanel, { type AITab } from "@/components/ai/AIPanel";
 import ChartFrame from "@/components/charts/ChartFrame";
 import ChartPanel from "@/components/panels/ChartPanel";
 import ConditionalPanel from "@/components/panels/ConditionalPanel";
+import PivotPanel from "@/components/panels/PivotPanel";
 import ValidationPanel from "@/components/panels/ValidationPanel";
 import { chartData } from "@/lib/charts";
+import { applyActions, type ApplyResult } from "@/lib/ai/actions";
 import { lookAt, prepareRules } from "@/lib/conditional";
 import { isAllowed, listItems } from "@/lib/validation";
+import { buildPivot } from "@/lib/pivot";
 import PrintDialog, { loadOptions, type PrintScope } from "@/components/print/PrintDialog";
 import PrintView, { type PrintJob, type PrintOptions } from "@/components/print/PrintView";
 import MenuBar from "@/components/toolbar/MenuBar";
@@ -46,6 +49,7 @@ import { writeXlsx, XLSX_MIME } from "@/lib/xlsx/write";
 import { parseCSV, parseTSV, toCSV, toTSV } from "@/lib/tsv";
 import { COL_COUNT, DEFAULT_COL_WIDTH, MIN_COL_WIDTH, ROW_COUNT } from "./constants";
 import CellContextMenu from "./CellContextMenu";
+import CommentEditor from "./CommentEditor";
 import FindBar from "./FindBar";
 import ValidationList from "./ValidationList";
 import Grid, { inRange, rangeOf } from "./Grid";
@@ -120,10 +124,12 @@ function Spreadsheet({ docId }: { docId: string }) {
     | { kind: "conditional" }
     | { kind: "validation" }
     | { kind: "chart"; id: string }
+    | { kind: "pivot" }
     | null
   >(null);
   const [selectedChart, setSelectedChart] = useState<string | null>(null);
   const [listMenu, setListMenu] = useState<{ anchor: DOMRect; row: number; col: number } | null>(null);
+  const [commentEditor, setCommentEditor] = useState<{ anchor: DOMRect; row: number; col: number } | null>(null);
 
   const dirtyRef = useRef(false);
   const historyRef = useRef<{ undo: HistoryEntry[]; redo: HistoryEntry[] }>({ undo: [], redo: [] });
@@ -905,8 +911,8 @@ function Spreadsheet({ docId }: { docId: string }) {
     exportXlsx: () => {
       try {
         download(writeXlsx(wb) as BlobPart, XLSX_MIME, `${title || "Spreadsheet"}.xlsx`);
-        if (wb.sheets.some((s) => wb.charts(s.id).length || wb.conditionalRules(s.id).length)) {
-          setToast("Downloaded. Charts and conditional formatting stay in Kexcel; Excel files don't include them yet.");
+        if (wb.sheets.some((s) => wb.charts(s.id).length || wb.conditionalRules(s.id).length || wb.commentKeys(s.id).next().value)) {
+          setToast("Downloaded. Charts, conditional formatting and comments stay in Kexcel; Excel files don't include them yet.");
         }
       } catch (e) {
         console.error(e);
@@ -940,6 +946,21 @@ function Spreadsheet({ docId }: { docId: string }) {
     openAI: (tab) => {
       if (editing) commitEdit();
       setPanel({ kind: "ai", tab });
+    },
+    editComment: () => {
+      if (editing) commitEdit();
+      const cell = scrollRef.current?.querySelector<HTMLElement>("[data-active-cell]");
+      const anchor = cell?.getBoundingClientRect() ?? new DOMRect(200, 200, 0, 0);
+      setCommentEditor({ anchor, row: active.row, col: active.col });
+    },
+    deleteComment: () => {
+      if (!wb.getComment(activeSheet, active.row, active.col)) return;
+      structural(() => wb.setComment(activeSheet, active.row, active.col, null));
+      focusGrid();
+    },
+    openPivot: () => {
+      if (editing) commitEdit();
+      setPanel({ kind: "pivot" });
     },
     openConditional: () => {
       if (editing) commitEdit();
@@ -1041,6 +1062,7 @@ function Spreadsheet({ docId }: { docId: string }) {
       fn();
     };
 
+    if (ctrl && e.altKey && key === "m") return shortcut(commands.editComment);
     if (ctrl && !e.altKey) {
       if (key === "z") return shortcut(e.shiftKey ? commands.redo : commands.undo);
       if (key === "y") return shortcut(commands.redo);
@@ -1306,6 +1328,7 @@ function Spreadsheet({ docId }: { docId: string }) {
             return !isAllowed(items, shown);
           }}
           hasList={(row, col) => !!wb.validationAt(activeSheet, row, col)}
+          commentAt={(row, col) => wb.getComment(activeSheet, row, col)}
           onOpenList={(anchor) => setListMenu({ anchor, row: active.row, col: active.col })}
           objects={wb.charts(activeSheet).map((chart) => (
             <ChartFrame
@@ -1361,6 +1384,26 @@ function Spreadsheet({ docId }: { docId: string }) {
           />
         )}
       </div>
+      {panel?.kind === "pivot" && (
+        <PivotPanel
+          wb={wb}
+          sheet={activeSheet}
+          defaultRange={
+            range.r1 > range.r0 || range.c1 > range.c0
+              ? rangeToName(range)
+              : rangeToName({ r0: 0, c0: 0, r1: Math.max(0, (wb.usedBounds(activeSheet)?.rows ?? 1) - 1), c1: Math.max(0, (wb.usedBounds(activeSheet)?.cols ?? 1) - 1) })
+          }
+          onCreate={(spec) => {
+            structural(() => wb.addSheetWith(buildPivot(wb, activeSheet, spec, `Pivot of ${wb.sheetName(activeSheet)}`), activeSheet));
+            setPanel(null);
+            focusGrid();
+          }}
+          onClose={() => {
+            setPanel(null);
+            focusGrid();
+          }}
+        />
+      )}
       {panel?.kind === "conditional" && (
         <ConditionalPanel
           rules={wb.conditionalRules(activeSheet)}
@@ -1415,6 +1458,14 @@ function Spreadsheet({ docId }: { docId: string }) {
             select({ anchor: cell, focus: cell });
           }}
           onGoTo={goToReference}
+          onApplyPlan={(actions) => {
+            let result: ApplyResult = { sheet: activeSheet, applied: 0, problems: [] };
+            structural(() => {
+              result = applyActions(wb, activeSheet, actions, { maxRows: ROW_COUNT, maxCols: COL_COUNT });
+              return result.sheet;
+            });
+            return result;
+          }}
         />
       )}
       </div>
@@ -1433,7 +1484,14 @@ function Spreadsheet({ docId }: { docId: string }) {
         )}
       </footer>
 
-      {menu && <CellContextMenu {...menu} commands={commands} onClose={() => setMenu(null)} />}
+      {menu && (
+        <CellContextMenu
+          {...menu}
+          commands={commands}
+          hasComment={!!wb.getComment(activeSheet, active.row, active.col)}
+          onClose={() => setMenu(null)}
+        />
+      )}
       {printOpen && (
         <PrintDialog
           gridlines={gridlines}
@@ -1443,6 +1501,25 @@ function Spreadsheet({ docId }: { docId: string }) {
           onPrint={startPrint}
           onClose={() => {
             setPrintOpen(false);
+            focusGrid();
+          }}
+        />
+      )}
+      {commentEditor && (
+        <CommentEditor
+          anchor={commentEditor.anchor}
+          cell={addressToName(commentEditor)}
+          initial={wb.getComment(activeSheet, commentEditor.row, commentEditor.col) ?? ""}
+          onSave={(text) => {
+            const { row, col } = commentEditor;
+            if ((wb.getComment(activeSheet, row, col) ?? "") !== text.trim()) {
+              structural(() => wb.setComment(activeSheet, row, col, text.trim() || null));
+            }
+            setCommentEditor(null);
+            focusGrid();
+          }}
+          onClose={() => {
+            setCommentEditor(null);
             focusGrid();
           }}
         />

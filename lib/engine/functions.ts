@@ -122,6 +122,37 @@ function conditionalPairs(name: string, args: Value[]) {
   return hits;
 }
 
+/**
+ * The *IFS family: values of `target` (or, without one, just a count) where
+ * every criteria range meets its criterion. Arguments come in (range, criterion) pairs.
+ */
+function multiCriteria(name: string, target: Value | null, pairs: Value[]): Scalar[] {
+  if (pairs.length === 0 || pairs.length % 2 !== 0) {
+    throw new CellError("#ERROR!", `${name} needs a criteria range and a criterion for each condition`);
+  }
+  const ranges: Matrix[] = [];
+  const tests: ((v: Scalar) => boolean)[] = [];
+  for (let i = 0; i < pairs.length; i += 2) {
+    ranges.push(asMatrix(pairs[i]));
+    tests.push(makeCriteria(toScalar(pairs[i + 1])));
+  }
+  const shape = target ? asMatrix(target) : ranges[0];
+  for (const r of ranges) {
+    if (r.length !== shape.length || (r[0]?.length ?? 0) !== (shape[0]?.length ?? 0)) {
+      throw new CellError("#VALUE!", `${name} ranges must be the same size`);
+    }
+  }
+  const out: Scalar[] = [];
+  for (let r = 0; r < shape.length; r++) {
+    for (let c = 0; c < shape[r].length; c++) {
+      if (tests.every((test, k) => test(ranges[k][r][c]))) out.push(shape[r][c]);
+    }
+  }
+  return out;
+}
+
+const numbersOf = (values: Scalar[]) => values.filter((v): v is number => typeof v === "number");
+
 function roundTo(n: number, digits: number, mode: "nearest" | "up" | "down") {
   const f = 10 ** digits;
   // toPrecision strips binary noise so 1.005 rounds to 1.01 like Excel does.
@@ -268,6 +299,22 @@ export const FUNCTIONS: Record<string, FormulaFunction> = {
     const nums = conditionalPairs("AVERAGEIF", args).filter((v): v is number => typeof v === "number");
     if (nums.length === 0) throw new CellError("#DIV/0!", "No matching numbers to average");
     return nums.reduce((a, b) => a + b, 0) / nums.length;
+  },
+
+  SUMIFS: (args) => numbersOf(multiCriteria("SUMIFS", args[0], args.slice(1))).reduce((a, b) => a + b, 0),
+  COUNTIFS: (args) => multiCriteria("COUNTIFS", null, args).length,
+  AVERAGEIFS: (args) => {
+    const nums = numbersOf(multiCriteria("AVERAGEIFS", args[0], args.slice(1)));
+    if (nums.length === 0) throw new CellError("#DIV/0!", "No matching numbers to average");
+    return nums.reduce((a, b) => a + b, 0) / nums.length;
+  },
+  MINIFS: (args) => {
+    const nums = numbersOf(multiCriteria("MINIFS", args[0], args.slice(1)));
+    return nums.length ? Math.min(...nums) : 0;
+  },
+  MAXIFS: (args) => {
+    const nums = numbersOf(multiCriteria("MAXIFS", args[0], args.slice(1)));
+    return nums.length ? Math.max(...nums) : 0;
   },
 
   VLOOKUP: (args) => {

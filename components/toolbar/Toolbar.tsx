@@ -337,7 +337,7 @@ export default function Toolbar({ commands: c, state: s }: { commands: Commands;
         <ChartIcon size={17} />
       </Button>
       <Divider />
-      <Button label="AI assistant: write, explain and check formulas" onClick={() => c.openAI("formula")} wide>
+      <Button label="AI assistant: make changes, write and explain formulas, check the sheet" onClick={() => c.openAI("do")} wide>
         <SparklesIcon size={16} className="text-[var(--accent)]" />
         <span className="font-medium">AI</span>
       </Button>

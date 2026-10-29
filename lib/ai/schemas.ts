@@ -31,6 +31,79 @@ export const CheckResult = z.object({
   ),
 });
 
+/** One step the AI can take on the workbook. Which fields matter depends on `type`. */
+export const SheetAction = z.object({
+  type: z.enum([
+    "set_values",
+    "format",
+    "clear",
+    "clear_format",
+    "insert_rows",
+    "insert_columns",
+    "delete_rows",
+    "delete_columns",
+    "sort",
+    "add_sheet",
+    "switch_sheet",
+    "rename_sheet",
+    "chart",
+    "highlight",
+    "color_scale",
+    "data_bars",
+    "dropdown",
+    "freeze",
+    "merge",
+    "unmerge",
+    "column_width",
+    "comment",
+    "pivot",
+  ]),
+  description: z.string().describe("One short sentence telling the user what this step does"),
+  range: z.string().optional().describe("Cells, rows or columns this step applies to, like B2:D9, B5, 5 or C"),
+  values: z
+    .array(z.array(z.string()))
+    .optional()
+    .describe("set_values: rows of cell contents from the top-left of range; formulas start with ="),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.boolean().optional(),
+  fill: z.string().optional().describe("Background colour as #rrggbb"),
+  text_color: z.string().optional().describe("Text colour as #rrggbb"),
+  align: z.enum(["left", "center", "right"]).optional(),
+  number_format: z.enum(["general", "number", "currency", "percent", "date", "time", "datetime"]).optional(),
+  decimals: z.number().int().min(0).max(10).optional(),
+  currency: z.string().optional().describe("ISO currency code such as USD or NGN"),
+  wrap: z.boolean().optional(),
+  count: z.number().int().min(1).max(1000).optional().describe("How many rows or columns to insert or delete"),
+  column: z.string().optional().describe("sort: the column letter to sort by"),
+  ascending: z.boolean().optional(),
+  name: z.string().optional().describe("Tab name for add_sheet, switch_sheet and rename_sheet"),
+  chart_type: z.enum(["column", "bar", "line", "area", "pie"]).optional(),
+  title: z.string().optional(),
+  condition: z
+    .enum(["greater", "less", "between", "equal", "notEqual", "contains", "blank", "notBlank", "duplicate"])
+    .optional(),
+  compare_values: z.array(z.string()).optional().describe("highlight: the value (or two for between) to compare with"),
+  style: z.enum(["red", "yellow", "green", "blue", "red_text", "bold"]).optional(),
+  scale: z.enum(["blue", "orange", "diverging"]).optional(),
+  items: z.array(z.string()).optional().describe("dropdown: the choices"),
+  rows: z.number().int().min(0).max(100).optional().describe("freeze: rows to freeze"),
+  columns: z.number().int().min(0).max(20).optional().describe("freeze: columns to freeze"),
+  width: z.number().int().min(20).max(800).optional().describe("column_width: pixels"),
+  text: z.string().optional().describe("comment: the note's text"),
+  row_field: z.string().optional().describe("pivot: header of the column to group rows by"),
+  column_field: z.string().optional().describe("pivot: optional header to spread across columns"),
+  value_field: z.string().optional().describe("pivot: header of the column to total"),
+  aggregate: z.enum(["sum", "count", "average", "min", "max"]).optional(),
+});
+
+export const PlanResult = z.object({
+  summary: z.string().describe("A sentence or two on what the plan does, or why it can't be done"),
+  actions: z.array(SheetAction).max(40),
+});
+
+export type SheetAction = z.infer<typeof SheetAction>;
+export type PlanResult = z.infer<typeof PlanResult>;
 export type FormulaResult = z.infer<typeof FormulaResult>;
 export type ExplainResult = z.infer<typeof ExplainResult>;
 export type AskResult = z.infer<typeof AskResult>;
@@ -41,7 +114,8 @@ export type AIRequest =
   | { action: "formula"; context: string; prompt: string }
   | { action: "explain"; context: string; cell: string; formula: string }
   | { action: "ask"; context: string; question: string }
-  | { action: "check"; context: string };
+  | { action: "check"; context: string }
+  | { action: "plan"; context: string; request: string };
 
 export type AIResponse =
   | { ok: true; action: "status"; enabled: boolean; provider: "anthropic" | "groq" | null; model: string }
@@ -49,4 +123,5 @@ export type AIResponse =
   | { ok: true; action: "explain"; result: ExplainResult }
   | { ok: true; action: "ask"; result: AskResult }
   | { ok: true; action: "check"; result: CheckResult }
+  | { ok: true; action: "plan"; result: PlanResult }
   | { ok: false; error: string };

@@ -10,12 +10,14 @@ export default function CellContextMenu({
   y,
   target,
   commands: c,
+  hasComment,
   onClose,
 }: {
   x: number;
   y: number;
   target: "cell" | "row" | "col";
   commands: Commands;
+  hasComment: boolean;
   onClose: () => void;
 }) {
   const clip: MenuEntry[] = [
@@ -36,12 +38,20 @@ export default function CellContextMenu({
     { label: "Sort Z to A", onSelect: () => c.sort(false) },
   ];
 
+  const comment: MenuEntry[] = hasComment
+    ? [
+        { type: "separator" },
+        { label: "Edit comment", shortcut: "Ctrl+Alt+M", onSelect: c.editComment },
+        { label: "Delete comment", onSelect: c.deleteComment },
+      ]
+    : [{ type: "separator" }, { label: "Add comment", shortcut: "Ctrl+Alt+M", onSelect: c.editComment }];
+
   const items =
     target === "row"
       ? [...clip, above, below, deleteRow, ...clear]
       : target === "col"
         ? [...clip, left, right, deleteCol, ...clear, ...sort]
-        : [...clip, above, below, deleteRow, { type: "separator" } as const, left, right, deleteCol, ...clear, ...sort];
+        : [...clip, above, below, deleteRow, { type: "separator" } as const, left, right, deleteCol, ...clear, ...sort, ...comment];
 
   return <ContextMenu x={x} y={y} items={items} onClose={onClose} />;
 }

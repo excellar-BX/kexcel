@@ -85,6 +85,8 @@ interface SheetState {
   rules: ConditionalRule[];
   validations: ValidationRule[];
   charts: ChartSpec[];
+  /** Notes on cells, keyed by "row,col". */
+  comments: Map<string, string>;
 }
 
 /** Rows at the top and columns at the left that stay in place while scrolling. */
@@ -127,6 +129,8 @@ export interface SheetJSON {
   conditional?: SavedRange<ConditionalRule>[];
   validations?: SavedRange<ValidationRule>[];
   charts?: SavedRange<ChartSpec>[];
+  /** Notes keyed by cell name. */
+  comments?: Record<string, string>;
 }
 
 export interface WorkbookJSON {
@@ -190,6 +194,10 @@ export class Workbook {
       sheet.rules = loadRanges<ConditionalRule>(s.conditional);
       sheet.validations = loadRanges<ValidationRule>(s.validations);
       sheet.charts = loadRanges<ChartSpec>(s.charts);
+      for (const [name, text] of Object.entries(s.comments ?? {})) {
+        const a = nameToAddress(name);
+        if (a && typeof text === "string" && text.trim()) sheet.comments.set(cellKey(a.row, a.col), text);
+      }
     }
     if (this.list.length === 0) this.createSheet("Sheet1");
     // Typed dates without a number format (from CSV files, or saved before dates
@@ -229,6 +237,9 @@ export class Workbook {
           ...(s.rules.length ? { conditional: saveRanges(s.rules) } : {}),
           ...(s.validations.length ? { validations: saveRanges(s.validations) } : {}),
           ...(s.charts.length ? { charts: saveRanges(s.charts) } : {}),
+          ...(s.comments.size
+            ? { comments: Object.fromEntries([...s.comments].map(([k, t]) => [addressToName(parseKey(k)), t])) }
+            : {}),
         };
       }),
     };
@@ -262,7 +273,8 @@ export class Workbook {
   /** Adds a sheet after `afterId` (or at the end) and returns its id. */
   addSheet(name?: string, afterId?: string): string {
     let finalName = name?.trim() ?? "";
-    if (!finalName || this.validateSheetName(finalName)) {
+    // A taken name gets a number added below; only unusable names fall back to "SheetN".
+    if (!finalName || finalName.length > 100 || INVALID_NAME_CHARS.test(finalName)) {
       let n = this.list.length + 1;
       while (this.byName.has(`sheet${n}`)) n++;
       finalName = `Sheet${n}`;
@@ -274,6 +286,26 @@ export class Workbook {
     }
     this.rebuild();
     return sheet.id;
+  }
+
+  /** Adds a sheet with content, such as a generated pivot table, after `afterId`. Returns its id. */
+  addSheetWith(data: Omit<SheetJSON, "id">, afterId?: string): string {
+    const id = this.addSheet(data.name, afterId);
+    const sheet = this.sheet(id);
+    for (const [name, f] of Object.entries(data.formats ?? {})) {
+      const a = nameToAddress(name);
+      if (a) sheet.formats.set(cellKey(a.row, a.col), f);
+    }
+    for (const [c, w] of Object.entries(data.colWidths ?? {})) sheet.colWidths.set(Number(c), w);
+    for (const [r, h] of Object.entries(data.rowHeights ?? {})) sheet.rowHeights.set(Number(r), h);
+    if (data.freeze) sheet.freeze = { ...data.freeze };
+    const updates: CellUpdate[] = [];
+    for (const [name, raw] of Object.entries(data.cells)) {
+      const a = nameToAddress(name);
+      if (a && raw !== "") updates.push({ ...a, raw });
+    }
+    this.setCells(id, updates);
+    return id;
   }
 
   duplicateSheet(id: string): string {
@@ -293,6 +325,7 @@ export class Workbook {
     copy.rules = src.rules.map((r) => ({ ...r, range: { ...r.range } }));
     copy.validations = src.validations.map((v) => ({ ...v, range: { ...v.range } }));
     copy.charts = src.charts.map((c) => ({ ...c, range: { ...c.range } }));
+    src.comments.forEach((t, k) => copy.comments.set(k, t));
     this.rebuild();
     return copy.id;
   }
@@ -511,6 +544,22 @@ export class Workbook {
     this.sheet(sheet).validations = rules.map((r) => ({ ...r }));
   }
 
+  getComment(sheet: string, row: number, col: number): string | undefined {
+    return this.byId.get(sheet)?.comments.get(cellKey(row, col));
+  }
+
+  /** Sets or, with empty text, removes a cell's note. */
+  setComment(sheet: string, row: number, col: number, text: string | null) {
+    const comments = this.sheet(sheet).comments;
+    if (text && text.trim()) comments.set(cellKey(row, col), text);
+    else comments.delete(cellKey(row, col));
+  }
+
+  /** "row,col" keys of cells with notes. */
+  commentKeys(sheet: string): IterableIterator<string> {
+    return (this.byId.get(sheet)?.comments ?? new Map<string, string>()).keys();
+  }
+
   charts(sheet: string): readonly ChartSpec[] {
     return this.byId.get(sheet)?.charts ?? [];
   }
@@ -566,6 +615,7 @@ export class Workbook {
 
     target.cells = remap(target.cells);
     target.formats = remap(target.formats);
+    target.comments = remap(target.comments);
     if (axis === "row") target.rowHeights = remapSizes(target.rowHeights);
     else target.colWidths = remapSizes(target.colWidths);
 
@@ -652,6 +702,7 @@ export class Workbook {
       rules: [],
       validations: [],
       charts: [],
+      comments: new Map(),
     };
     this.list.push(sheet);
     this.byId.set(sheetId, sheet);

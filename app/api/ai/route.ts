@@ -1,4 +1,4 @@
-import { AIError, aiModel, aiProvider, askSheet, checkSheet, explainFormula, writeFormula } from "@/lib/ai/ai.server";
+import { AIError, aiModel, aiProvider, askSheet, checkSheet, explainFormula, planActions, writeFormula } from "@/lib/ai/ai.server";
 import type { AIRequest, AIResponse } from "@/lib/ai/schemas";
 
 const MAX_BODY_BYTES = 200_000;
@@ -64,6 +64,11 @@ export async function POST(request: Request) {
       }
       case "check":
         return reply({ ok: true, action: "check", result: await checkSheet(context) });
+      case "plan": {
+        const request = text(body.request);
+        if (!request) return fail("Say what you'd like done, in up to 2,000 characters.", 400);
+        return reply({ ok: true, action: "plan", result: await planActions(context, request) });
+      }
       default:
         return fail("Unknown AI action.", 400);
     }

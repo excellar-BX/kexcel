@@ -92,6 +92,10 @@ export interface Commands {
   toggleGridlines(): void;
   showShortcuts(): void;
   openAI(tab: AITab): void;
+  /** Opens the note editor for the active cell. */
+  editComment(): void;
+  deleteComment(): void;
+  openPivot(): void;
   openConditional(): void;
   /** Opens the dropdown list (data validation) editor. */
   openValidation(): void;

@@ -58,6 +58,12 @@ export function describeSheet(wb: Workbook, sheet: string, selection: Range, act
     chars += line.length + 1;
   }
 
+  const notes = [...wb.commentKeys(sheet)].slice(0, 50).map((k) => {
+    const [row, col] = k.split(",").map(Number);
+    return `${addressToName({ row, col })}: ${JSON.stringify(wb.getComment(sheet, row, col))}`;
+  });
+  if (notes.length) lines.push(`Cell comments: ${notes.join(" | ")}`);
+
   const truncated =
     shownRows < used.rows || cols < used.cols
       ? { shownRows, totalRows: used.rows, shownCols: cols, totalCols: used.cols }

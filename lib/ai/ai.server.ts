@@ -5,7 +5,7 @@ import { FUNCTIONS } from "@/lib/engine/functions";
 import { anthropicConfigured, anthropicModel, callAnthropic } from "./providers/anthropic.server";
 import { callGroq, groqConfigured, groqModel } from "./providers/groq.server";
 import { AIError } from "./errors";
-import { AskResult, CheckResult, ExplainResult, FormulaResult } from "./schemas";
+import { AskResult, CheckResult, ExplainResult, FormulaResult, PlanResult } from "./schemas";
 
 export const MAX_CONTEXT_LENGTH = 100_000;
 
@@ -92,4 +92,42 @@ export const checkSheet = (context: string) =>
     context,
     `Review the current tab for problems a careful accountant would flag: error values, ranges that miss rows of data, a formula that differs from its neighbours in the same column, numbers typed as text, totals that don't add up, and obvious typos in labels.
 Report only real problems, most important first, at most 15. Give an exact fix only when you are sure of the correct cell content. Return an empty list if the tab looks fine.`,
+  );
+
+const ACTIONS_GUIDE = `Actions you can use (fields each needs):
+- set_values: range (top-left cell), values (rows of cell contents; formulas start with =)
+- format: range, any of bold, italic, underline, fill, text_color, align, number_format, decimals, currency, wrap
+- clear (contents) / clear_format: range
+- insert_rows / delete_rows: range (a row number like 5), count
+- insert_columns / delete_columns: range (a column letter like C), count
+- sort: range (include every column of the table, not the header row), column (letter to sort by), ascending
+- add_sheet: name (later steps then work on the new tab); switch_sheet: name; rename_sheet: name (renames the current tab)
+- chart: range (include the header row and label column), chart_type, title
+- highlight: range, condition, compare_values, style; color_scale: range, scale; data_bars: range
+- dropdown: range, items
+- freeze: rows, columns
+- merge / unmerge: range
+- column_width: range (column letters like A:C), width in pixels
+- comment: range (one cell), text
+- pivot: range (the table with its header row), row_field, optional column_field, value_field (header names), aggregate; makes a new tab`;
+
+export const planActions = (context: string, request: string) =>
+  run(
+    PlanResult,
+    "medium",
+    context,
+    `The user wants Kexcel to do this to their workbook:
+<request>${request}</request>
+
+Plan the steps as actions that Kexcel will carry out on the current tab, in order.
+${ACTIONS_GUIDE}
+
+Guidelines:
+- Do only what was asked. Don't change or move data the request doesn't mention.
+- Write formulas rather than typed results, so totals stay correct when the data changes.
+- Cover every existing row of data in ranges, and use the sheet's real headers and cell positions.
+- Put new totals or summaries in empty cells next to or under the data, not over existing values.
+- Ranges for charts, sorting, pivot tables and highlighting cover the header and data rows only, never total rows you add.
+- Use as few steps as possible, and give each a short plain description.
+- If the request can't be done with these actions, return no actions and explain why in the summary.`,
   );
